@@ -2,5 +2,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum OrchestratorError {
-    // TODO: Add errors
+    #[error("Placeholder error - implementation pending")]
+    Placeholder,
 }

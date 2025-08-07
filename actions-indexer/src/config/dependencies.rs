@@ -11,6 +11,6 @@ pub struct Dependencies {
 
 impl Dependencies {
     pub async fn new() -> Result<Self, IndexingError> {
-        // TODO: Implement
+        todo!("Dependencies::new() implementation required")
     }
 }

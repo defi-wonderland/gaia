@@ -6,7 +6,6 @@ members = [
     "wire",
     "cache",
     "ipfs",
-    "wire", 
     
     "actions-indexer", 
     "actions-indexer-consumer", 
