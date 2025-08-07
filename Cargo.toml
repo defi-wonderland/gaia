@@ -6,6 +6,13 @@ members = [
     "wire",
     "cache",
     "ipfs",
-    "wire",
+    "wire", 
+    
+    "actions-indexer", 
+    "actions-indexer-consumer", 
+    "actions-indexer-processor", 
+    "actions-indexer-loader", 
+    "actions-indexer-types",
+    "actions-indexer-orchestrator",
 ]
 resolver = "2"

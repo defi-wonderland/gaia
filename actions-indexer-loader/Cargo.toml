@@ -1,0 +1,17 @@
+[package]
+name = "actions-indexer-loader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1"
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "postgres",
+    "json",
+    "uuid",
+    "chrono",
+    "time",
+] }
+thiserror = "2.0.12"
+actions-indexer-types = { path = "../actions-indexer-types" }
