@@ -1,6 +1,4 @@
-mod errors;
-
-use actions_indexer_types::models::{Action, UserVote, VotesCount};
+use crate::models::{Action, UserVote, VotesCount};
 use crate::errors::LoaderError;
 
 #[async_trait::async_trait]

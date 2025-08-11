@@ -1,10 +1,12 @@
 mod config;
+mod errors;
+
 use crate::config::Dependencies;
 
 use dotenv::dotenv;
 
-use actions_indexer_types::errors::IndexingError;
-use actions_indexer_orchestrator::Orchestrator;
+use crate::errors::IndexingError;
+use actions_indexer_pipeline::Orchestrator;
 
 #[tokio::main]
 async fn main() -> Result<(), IndexingError> {

@@ -1,6 +1,4 @@
-mod errors;
-
-use actions_indexer_types::models::ActionEvent;
+use crate::models::ActionEvent;
 use crate::errors::ConsumerError;
 
 use tokio_stream::Stream;

@@ -6,60 +6,22 @@ version = 4
 name = "actions-indexer"
 version = "0.1.0"
 dependencies = [
- "actions-indexer-consumer",
- "actions-indexer-loader",
- "actions-indexer-orchestrator",
- "actions-indexer-processor",
- "actions-indexer-types",
+ "actions-indexer-pipeline",
  "dotenv",
  "sqlx",
+ "thiserror 2.0.12",
  "tokio",
 ]
 
 [[package]]
-name = "actions-indexer-consumer"
+name = "actions-indexer-pipeline"
 version = "0.1.0"
 dependencies = [
- "actions-indexer-types",
- "thiserror 2.0.12",
- "tokio-stream",
-]
-
-[[package]]
-name = "actions-indexer-loader"
-version = "0.1.0"
-dependencies = [
- "actions-indexer-types",
  "async-trait",
- "sqlx",
- "thiserror 2.0.12",
-]
-
-[[package]]
-name = "actions-indexer-orchestrator"
-version = "0.1.0"
-dependencies = [
- "actions-indexer-consumer",
- "actions-indexer-loader",
- "actions-indexer-processor",
  "futures 0.3.31",
  "sqlx",
  "thiserror 2.0.12",
-]
-
-[[package]]
-name = "actions-indexer-processor"
-version = "0.1.0"
-dependencies = [
- "actions-indexer-types",
- "thiserror 2.0.12",
-]
-
-[[package]]
-name = "actions-indexer-types"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.12",
+ "tokio-stream",
 ]
 
 [[package]]

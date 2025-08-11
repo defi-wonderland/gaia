@@ -1,8 +1,0 @@
-[package]
-name = "actions-indexer-processor"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-thiserror = "2.0.12"
-actions-indexer-types = { path = "../actions-indexer-types" }

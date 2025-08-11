@@ -1,7 +1,7 @@
-use actions_indexer_consumer::ConsumeActions;
-use actions_indexer_loader::ActionsRepository;
-use actions_indexer_processor::ProcessActions;
-use actions_indexer_types::errors::IndexingError;
+use actions_indexer_pipeline::consumer::ConsumeActions;
+use actions_indexer_pipeline::loader::ActionsRepository;
+use actions_indexer_pipeline::processor::ProcessActions;
+use crate::errors::IndexingError;
 
 pub struct Dependencies {
     pub consumer: Box<dyn ConsumeActions>,

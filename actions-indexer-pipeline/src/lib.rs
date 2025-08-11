@@ -1,8 +1,14 @@
-use actions_indexer_consumer::ConsumeActions;
-use actions_indexer_loader::ActionsRepository;
-use actions_indexer_processor::ProcessActions;
+pub mod consumer;
+pub mod loader;
+pub mod processor;
 
+mod models;
 mod errors;
+
+use consumer::ConsumeActions;
+use loader::ActionsRepository;
+use processor::ProcessActions;
+
 
 use crate::errors::OrchestratorError;
 

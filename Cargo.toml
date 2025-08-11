@@ -8,10 +8,6 @@ members = [
     "ipfs",
     
     "actions-indexer", 
-    "actions-indexer-consumer", 
-    "actions-indexer-processor", 
-    "actions-indexer-loader", 
-    "actions-indexer-types",
-    "actions-indexer-orchestrator",
+    "actions-indexer-pipeline", 
 ]
 resolver = "2"
