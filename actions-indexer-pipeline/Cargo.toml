@@ -16,4 +16,5 @@ sqlx = { version = "0.8", features = [
 ] }
 thiserror = "2.0.12"
 tokio-stream = "0.1.17"
-actions-indexer-shared = { path = "../actions-indexer-shared" } 
+actions-indexer-shared = { path = "../actions-indexer-shared" }
+actions-indexer-repository = { path = "../actions-indexer-repository" } 

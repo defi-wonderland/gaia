@@ -1,5 +1,7 @@
-use crate::{consumer::ConsumeActions, loader::ActionsRepository, processor::ProcessActions};
 use crate::errors::OrchestratorError;
+use crate::consumer::ConsumeActions;
+use crate::processor::ProcessActions;
+use crate::loader::ActionsRepository;
 
 pub struct Orchestrator<DB: sqlx::Database> {
     pub actions_consumer: Box<dyn ConsumeActions>,
