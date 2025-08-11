@@ -6,7 +6,7 @@ use crate::config::Dependencies;
 use dotenv::dotenv;
 
 use crate::errors::IndexingError;
-use actions_indexer_pipeline::Orchestrator;
+use actions_indexer_pipeline::orchestrator::Orchestrator;
 
 #[tokio::main]
 async fn main() -> Result<(), IndexingError> {
