@@ -9,5 +9,6 @@ members = [
     
     "actions-indexer", 
     "actions-indexer-pipeline", 
+    "actions-indexer-shared", 
 ]
 resolver = "2"

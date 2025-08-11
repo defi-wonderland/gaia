@@ -1,4 +1,4 @@
-use crate::models::{ActionEvent, Action};
+use actions_indexer_shared::types::{ActionEvent, Action};
 use crate::errors::ProcessorError;
 
 pub trait ProcessActions {

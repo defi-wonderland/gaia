@@ -1,4 +1,4 @@
-use crate::models::ActionEvent;
+use actions_indexer_shared::types::ActionEvent;
 use crate::errors::ConsumerError;
 
 use tokio_stream::Stream;

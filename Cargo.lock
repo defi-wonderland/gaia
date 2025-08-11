@@ -17,12 +17,17 @@ dependencies = [
 name = "actions-indexer-pipeline"
 version = "0.1.0"
 dependencies = [
+ "actions-indexer-shared",
  "async-trait",
  "futures 0.3.31",
  "sqlx",
  "thiserror 2.0.12",
  "tokio-stream",
 ]
+
+[[package]]
+name = "actions-indexer-shared"
+version = "0.1.0"
 
 [[package]]
 name = "addr2line"
