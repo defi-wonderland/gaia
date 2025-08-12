@@ -20,6 +20,6 @@ pub trait ActionsRepository: Send + Sync {
 
     async fn persist_changeset(
         &self,
-        changeset: &Changeset,
+        changeset: &Changeset<'_>,
     ) -> Result<(), ActionsRepositoryError>;
 }

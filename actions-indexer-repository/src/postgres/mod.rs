@@ -59,7 +59,7 @@ impl ActionsRepository for PostgresActionsRepository {
 
     async fn persist_changeset(
         &self,
-        changeset: &Changeset,
+        changeset: &Changeset<'_>,
     ) -> Result<(), ActionsRepositoryError> {
         let mut tx = self.pool.begin().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
         self.insert_actions_tx(changeset.actions, &mut tx).await?;
