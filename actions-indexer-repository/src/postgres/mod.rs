@@ -1,42 +1,71 @@
 use async_trait::async_trait;
-use sqlx::Transaction;
-use actions_indexer_shared::types::{Action, UserVote, VotesCount};
+use actions_indexer_shared::types::{Action, Changeset, UserVote, VotesCount};
 use crate::{ActionsRepository, ActionsRepositoryError};
 
-pub struct PostgresActionsRepository {}
+pub struct PostgresActionsRepository {
+    pool: sqlx::PgPool,
+}
 
 impl PostgresActionsRepository {
-    pub fn new() -> Self {
-        Self {}
+    pub async fn new(url: &str) -> Result<Self, ActionsRepositoryError> {
+        let pool = sqlx::PgPool::connect(url).await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        Ok(Self { pool })
+    }
+
+    async fn insert_actions_tx(&self, actions: &[Action], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        todo!("Implement insert_actions_tx for Postgres")
+    }
+
+    async fn update_user_votes_tx(&self, user_votes: &[UserVote], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        todo!("Implement update_user_votes_tx for Postgres")
+    }
+
+    async fn update_votes_counts_tx(&self, votes_counts: &[VotesCount], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        todo!("Implement update_votes_counts_tx for Postgres")
     }
 }
 
 #[async_trait]
-impl ActionsRepository<sqlx::Postgres> for PostgresActionsRepository {
+impl ActionsRepository for PostgresActionsRepository {
     async fn insert_actions(
         &self,
-        _actions: &[Action],
-        _tx: &mut Transaction<'_, sqlx::Postgres>,
+        actions: &[Action],
     ) -> Result<(), ActionsRepositoryError> {
-        // TODO: Implement Postgres-specific logic
-        todo!("Implement insert_actions for Postgres")
+        let mut tx = self.pool.begin().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        self.insert_actions_tx(actions, &mut tx).await?;
+        tx.commit().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        Ok(())
     }
 
     async fn update_user_votes(
         &self,
-        _user_votes: &[UserVote],
-        _tx: &mut Transaction<'_, sqlx::Postgres>,
+        user_votes: &[UserVote],
     ) -> Result<(), ActionsRepositoryError> {
-        // TODO: Implement Postgres-specific logic
-        todo!("Implement update_user_votes for Postgres")
+        let mut tx = self.pool.begin().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        self.update_user_votes_tx(user_votes, &mut tx).await?;
+        tx.commit().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        Ok(())
     }
 
     async fn update_votes_counts(
         &self,
-        _votes_counts: &[VotesCount],
-        _tx: &mut Transaction<'_, sqlx::Postgres>,
+        votes_counts: &[VotesCount],
     ) -> Result<(), ActionsRepositoryError> {
-        // TODO: Implement Postgres-specific logic
-        todo!("Implement update_votes_counts for Postgres")
+        let mut tx = self.pool.begin().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        self.update_votes_counts_tx(votes_counts, &mut tx).await?;
+        tx.commit().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        Ok(())
+    }
+
+    async fn persist_changeset(
+        &self,
+        changeset: &Changeset,
+    ) -> Result<(), ActionsRepositoryError> {
+        let mut tx = self.pool.begin().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        self.insert_actions_tx(changeset.actions, &mut tx).await?;
+        self.update_user_votes_tx(changeset.user_votes, &mut tx).await?;
+        self.update_votes_counts_tx(changeset.votes_count, &mut tx).await?;
+        tx.commit().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+        Ok(())
     }
 }
