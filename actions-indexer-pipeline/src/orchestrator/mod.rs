@@ -1,19 +1,19 @@
 use crate::errors::OrchestratorError;
 use crate::consumer::ConsumeActions;
 use crate::processor::ProcessActions;
-use crate::loader::ActionsRepository;
+use crate::loader::ActionsLoader;
 
-pub struct Orchestrator<DB: sqlx::Database> {
+pub struct Orchestrator {
     pub actions_consumer: Box<dyn ConsumeActions>,
     pub actions_processor: Box<dyn ProcessActions>,
-    pub actions_loader: Box<dyn ActionsRepository<DB>>,
+    pub actions_loader: Box<ActionsLoader>,
 }
 
-impl<DB: sqlx::Database> Orchestrator<DB> {
+impl Orchestrator {
     pub fn new(
         actions_consumer: Box<dyn ConsumeActions>,
         actions_processor: Box<dyn ProcessActions>,
-        actions_loader: Box<dyn ActionsRepository<DB>>,
+        actions_loader: Box<ActionsLoader>,
     ) -> Self {
         Self {
             actions_consumer,
