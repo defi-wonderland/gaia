@@ -1,3 +1,5 @@
+//! This module defines the core data structures and types used across the actions indexer.
+//! It re-exports specific types like `ActionEvent`, `Action`, `UserVote`, `VotesCount`, and `Changeset`.
 mod action_event;
 mod action;
 mod user_vote;
