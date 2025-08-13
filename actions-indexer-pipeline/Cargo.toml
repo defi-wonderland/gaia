@@ -21,3 +21,4 @@ actions-indexer-repository = { path = "../actions-indexer-repository" }
 
 [dev-dependencies]
 alloy = "1.0.24"
+uuid = "1.18.0"
