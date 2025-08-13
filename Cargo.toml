@@ -6,6 +6,9 @@ members = [
     "wire",
     "cache",
     "ipfs",
-    "wire",
+    
+    "actions-indexer", 
+    "actions-indexer-pipeline", 
+    "actions-indexer-shared", "actions-indexer-repository", 
 ]
 resolver = "2"

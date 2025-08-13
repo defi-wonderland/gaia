@@ -1,0 +1,20 @@
+[package]
+name = "actions-indexer-pipeline"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1.88"
+futures03 = { version = "0.3.1", package = "futures", features = ["compat"] }
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "postgres",
+    "json",
+    "uuid",
+    "chrono",
+    "time",
+] }
+thiserror = "2.0.12"
+tokio-stream = "0.1.17"
+actions-indexer-shared = { path = "../actions-indexer-shared" }
+actions-indexer-repository = { path = "../actions-indexer-repository" } 
