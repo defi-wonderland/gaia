@@ -1,5 +1,5 @@
 # .github/workflows/actions-indexer-tests.yml
-name: Actions Indexer Tests (PR pushes)
+name: Actions Indexer Tests
 
 on:
     pull_request:
@@ -20,7 +20,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check-and-test:
+  actions-indexer-tests:
     runs-on: ubuntu-latest
 
     steps:
