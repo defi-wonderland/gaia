@@ -1,0 +1,52 @@
+# .github/workflows/actions-indexer-tests.yml
+name: Actions Indexer Tests (PR pushes)
+
+on:
+    pull_request:
+        types: [opened, synchronize]
+        branches:
+            - dev
+            - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo/target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Cargo check (selected crates)
+        run: |
+          cargo check --locked \
+            -p actions-indexer \
+            -p actions-indexer-pipeline \
+            -p actions-indexer-shared \
+            -p actions-indexer-repository
+
+      - name: Cargo test (selected crates)
+        run: |
+          cargo test --locked --all-targets \
+            -p actions-indexer \
+            -p actions-indexer-pipeline \
+            -p actions-indexer-shared \
+            -p actions-indexer-repository
