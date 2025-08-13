@@ -1,6 +1,6 @@
 use actions_indexer_pipeline::consumer::ConsumeActions;
 use actions_indexer_pipeline::loader::ActionsLoader;
-use actions_indexer_pipeline::processor::ProcessActions;
+use actions_indexer_pipeline::processor::ActionsProcessor;
 use crate::errors::IndexingError;
 
 /// `Dependencies` struct holds the necessary components for the action indexer.
@@ -9,7 +9,7 @@ use crate::errors::IndexingError;
 /// business logic, and a loader for persisting processed data.
 pub struct Dependencies {
     pub consumer: Box<dyn ConsumeActions>,
-    pub processor: Box<dyn ProcessActions>,
+    pub processor: Box<ActionsProcessor>,
     pub loader: Box<ActionsLoader>,
 }
 

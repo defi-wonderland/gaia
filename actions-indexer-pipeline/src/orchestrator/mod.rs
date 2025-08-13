@@ -4,7 +4,7 @@
 //! flow of action events from ingestion to persistence.
 use crate::errors::OrchestratorError;
 use crate::consumer::ConsumeActions;
-use crate::processor::ProcessActions;
+use crate::processor::ActionsProcessor;
 use crate::loader::ActionsLoader;
 
 /// `Orchestrator` is responsible for coordinating the consumption, processing,
@@ -14,7 +14,7 @@ use crate::loader::ActionsLoader;
 /// `ActionsLoader` traits, enabling a flexible and extensible pipeline.
 pub struct Orchestrator {
     pub actions_consumer: Box<dyn ConsumeActions>,
-    pub actions_processor: Box<dyn ProcessActions>,
+    pub actions_processor: Box<ActionsProcessor>,
     pub actions_loader: Box<ActionsLoader>,
 }
 
@@ -32,7 +32,7 @@ impl Orchestrator {
     /// A new `Orchestrator` instance.
     pub fn new(
         actions_consumer: Box<dyn ConsumeActions>,
-        actions_processor: Box<dyn ProcessActions>,
+        actions_processor: Box<ActionsProcessor>,
         actions_loader: Box<ActionsLoader>,
     ) -> Self {
         Self {
