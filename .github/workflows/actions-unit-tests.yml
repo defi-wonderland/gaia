@@ -12,6 +12,7 @@ on:
             - 'actions-indexer-pipeline/**'
             - 'actions-indexer-shared/**'
             - 'actions-indexer-repository/**'
+            - '.github/workflows/actions-unit-tests.yml'
 
 permissions:
   contents: read
