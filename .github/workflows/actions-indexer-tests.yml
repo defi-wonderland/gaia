@@ -27,9 +27,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@v2
         with:
