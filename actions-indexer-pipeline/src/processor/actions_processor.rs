@@ -86,6 +86,7 @@ mod tests {
 
     fn make_action_event(payload_byte: u8) -> ActionEvent {
         ActionEvent {
+            sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             kind: 1,
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
@@ -169,6 +170,7 @@ mod tests {
     fn test_process_invalid_action_type() {
         let processor = mocked_processor();
         let action_event = ActionEvent {
+            sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             kind: 2, // no handler defined for this action type
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),

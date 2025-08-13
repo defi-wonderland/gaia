@@ -25,14 +25,17 @@ pub struct ActionRaw {
 /// and maps them to the corresponding fields in the `ActionRaw` struct.
 impl From<ActionEvent> for ActionRaw {
     fn from(event: ActionEvent) -> Self {
+        let group_id = (!event.group_id.is_empty()).then(|| event.group_id.clone());
+        let metadata = (!event.payload.is_empty()).then(|| event.payload.clone());
+
         ActionRaw {
             action_type: u64::from(event.kind),
             version: u64::from(event.version),
-            sender: event.space_pov,
+            sender: event.sender,
             entity: event.entity,
-            group_id: Some(event.group_id),
+            group_id,
             space_pov: event.space_pov,
-            metadata: Some(event.payload),
+            metadata,
             block_number: event.block_number,
             block_timestamp: event.block_timestamp,
             tx_hash: event.tx_hash,
