@@ -67,6 +67,7 @@ mod tests {
     use actions_indexer_shared::types::{Action, ActionEvent, Vote, VoteAction};
     use alloy::hex::FromHex;
     use alloy::primitives::{Address, Bytes, TxHash};
+    use uuid::uuid;
 
     struct MockHandler;
 
@@ -90,8 +91,8 @@ mod tests {
             kind: 1,
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            entity: "0x1234567890123456789012345678901234567890".to_string(),
-            group_id: "0x1234567890123456789012345678901234567890".to_string(),
+            entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
+            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             payload: Bytes::from(vec![payload_byte]),
             block_number: 1,
             block_timestamp: 1,
@@ -174,8 +175,8 @@ mod tests {
             kind: 2, // no handler defined for this action type
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            entity: "0x1234567890123456789012345678901234567890".to_string(),
-            group_id: "0x1234567890123456789012345678901234567890".to_string(),
+            entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
+            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             payload: Bytes::from(vec![0]),
             block_number: 1,
             block_timestamp: 1,

@@ -1,5 +1,6 @@
 use crate::types::ActionEvent;
 use alloy::primitives::{Address, BlockNumber, BlockTimestamp, Bytes, TxHash};
+use uuid::Uuid;
 
 /// Represents the raw data of an action as extracted from an event.
 ///
@@ -10,8 +11,8 @@ pub struct ActionRaw {
     pub action_type: u64,
     pub version: u64,
     pub sender: Address,
-    pub entity: String,
-    pub group_id: Option<String>,
+    pub entity: Uuid,
+    pub group_id: Option<Uuid>,
     pub space_pov: Address,
     pub metadata: Option<Bytes>,
     pub block_number: BlockNumber,
@@ -25,7 +26,7 @@ pub struct ActionRaw {
 /// and maps them to the corresponding fields in the `ActionRaw` struct.
 impl From<ActionEvent> for ActionRaw {
     fn from(event: ActionEvent) -> Self {
-        let group_id = (!event.group_id.is_empty()).then(|| event.group_id.clone());
+        let group_id = (!event.group_id.is_nil()).then(|| event.group_id.clone());
         let metadata = (!event.payload.is_empty()).then(|| event.payload.clone());
 
         ActionRaw {
