@@ -35,14 +35,6 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Cargo check (selected crates)
-        run: |
-          cargo check --locked \
-            -p actions-indexer \
-            -p actions-indexer-pipeline \
-            -p actions-indexer-shared \
-            -p actions-indexer-repository
-
       - name: Cargo test (selected crates)
         run: |
           cargo test --locked --all-targets \
