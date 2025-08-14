@@ -1,7 +1,7 @@
 CREATE TABLE raw_actions (
     id              SERIAL PRIMARY KEY,
-    type            BIGINT NOT NULL,          
-    version         BIGINT NOT NULL,          
+    action_type     BIGINT NOT NULL,          
+    action_version  BIGINT NOT NULL,          
     sender          VARCHAR(42) NOT NULL,     
     entity          UUID NOT NULL,            
     group_id        UUID,                     
@@ -18,7 +18,7 @@ CREATE TABLE user_votes (
     entity_id       UUID NOT NULL,            
     space_id        VARCHAR(42) NOT NULL,     
     vote_type       SMALLINT NOT NULL,        
-    timestamp       TIMESTAMPTZ NOT NULL,     
+    voted_at        TIMESTAMPTZ NOT NULL,     
     UNIQUE(user_id, entity_id, space_id)      
 );
 
