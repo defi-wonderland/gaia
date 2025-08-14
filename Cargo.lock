@@ -21,7 +21,6 @@ dependencies = [
  "actions-indexer-shared",
  "alloy",
  "async-trait",
- "futures 0.3.31",
  "sqlx",
  "thiserror 2.0.12",
  "tokio-stream",
