@@ -1,6 +1,6 @@
-use crate::types::ActionEvent;
-use alloy::primitives::{Address, BlockNumber, BlockTimestamp, Bytes, TxHash};
-use uuid::Uuid;
+use crate::types::{ActionEvent, UserAddress, SpaceAddress, EntityId, GroupId};
+use alloy::primitives::{BlockNumber, BlockTimestamp, Bytes, TxHash};
+
 
 /// Represents the raw data of an action as extracted from an event.
 ///
@@ -10,10 +10,10 @@ use uuid::Uuid;
 pub struct ActionRaw {
     pub action_type: u64,
     pub version: u64,
-    pub sender: Address,
-    pub entity: Uuid,
-    pub group_id: Option<Uuid>,
-    pub space_pov: Address,
+    pub sender: UserAddress,
+    pub entity: EntityId,
+    pub group_id: Option<GroupId>,
+    pub space_pov: SpaceAddress,
     pub metadata: Option<Bytes>,
     pub block_number: BlockNumber,
     pub block_timestamp: BlockTimestamp,
