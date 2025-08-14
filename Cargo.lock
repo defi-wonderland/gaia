@@ -33,9 +33,13 @@ name = "actions-indexer-repository"
 version = "0.1.0"
 dependencies = [
  "actions-indexer-shared",
+ "alloy",
  "async-trait",
+ "hex",
  "sqlx",
  "thiserror 1.0.69",
+ "time",
+ "uuid",
 ]
 
 [[package]]
@@ -43,6 +47,7 @@ name = "actions-indexer-shared"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "serde",
  "uuid",
 ]
 
@@ -5059,6 +5064,7 @@ checksum = "f33196643e165781c20a5ead5582283a7dacbb87855d867fbc2df3f81eddc1be"
 dependencies = [
  "getrandom 0.3.3",
  "js-sys",
+ "serde",
  "wasm-bindgen",
 ]
 
