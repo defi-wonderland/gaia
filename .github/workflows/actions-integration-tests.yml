@@ -77,4 +77,5 @@ jobs:
           cargo test --test '*' --locked \
             -p actions-indexer \
             -p actions-indexer-pipeline \
-            -p actions-indexer-repository
+            -p actions-indexer-repository \
+            -p actions-indexer-shared
