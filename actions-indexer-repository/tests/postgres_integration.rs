@@ -35,7 +35,7 @@ fn make_user_vote() -> UserVote {
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         vote_type: 1,
-        timestamp: 1755182913,
+        voted_at: 1755182913,
     }
 }
 
@@ -125,7 +125,7 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     repository.update_user_votes(&[user_vote.clone()]).await.unwrap();
 
     let votes_in_db = sqlx::query!(
-        "SELECT user_id, entity_id, space_id, vote_type, timestamp FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
+        "SELECT user_id, entity_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
         format!("0x{}", hex::encode(user_vote.user_id.as_slice())),
         user_vote.entity_id,
         format!("0x{}", hex::encode(user_vote.space_id.as_slice())),
@@ -138,19 +138,19 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     assert_eq!(votes_in_db.entity_id, user_vote.entity_id);
     assert_eq!(votes_in_db.space_id, format!("0x{}", hex::encode(user_vote.space_id.as_slice())));
     assert_eq!(votes_in_db.vote_type as u8, user_vote.vote_type);
-    assert_eq!(votes_in_db.timestamp.unix_timestamp() as u64, user_vote.timestamp);
+    assert_eq!(votes_in_db.voted_at.unix_timestamp() as u64, user_vote.voted_at);
 
     // Test update
     let updated_user_vote = UserVote {
         vote_type: 2,
-        timestamp: 1755182914,
+        voted_at: 1755182914,
         ..user_vote.clone()
     };
 
     repository.update_user_votes(&[updated_user_vote.clone()]).await.unwrap();
 
     let updated_votes_in_db = sqlx::query!(
-        "SELECT user_id, entity_id, space_id, vote_type, timestamp FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
+        "SELECT user_id, entity_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
         format!("0x{}", hex::encode(updated_user_vote.user_id.as_slice())),
         updated_user_vote.entity_id,
         format!("0x{}", hex::encode(updated_user_vote.space_id.as_slice())),
@@ -160,7 +160,7 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     .unwrap();
 
     assert_eq!(updated_votes_in_db.vote_type as u8, updated_user_vote.vote_type);
-    assert_eq!(updated_votes_in_db.timestamp.unix_timestamp() as u64, updated_user_vote.timestamp);
+    assert_eq!(updated_votes_in_db.voted_at.unix_timestamp() as u64, updated_user_vote.voted_at);
 }
 
 #[sqlx::test(migrations = "src/postgres/migrations")]
@@ -305,14 +305,14 @@ async fn test_get_user_votes(pool: sqlx::PgPool) {
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567891").unwrap(),
         vote_type: 1,
-        timestamp: 1755182913,
+        voted_at: 1755182913,
     };
     let user_vote3 = UserVote {
         user_id: Address::from_hex("0x1234567890123456789012345678901234567890").unwrap(),
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567892").unwrap(),
         vote_type: 2,
-        timestamp: 1755182914,
+        voted_at: 1755182914,
     };
 
     repository.update_user_votes(&[user_vote1.clone(), user_vote2.clone(), user_vote3.clone()]).await.unwrap();
@@ -344,7 +344,7 @@ async fn test_get_user_votes_partial_matches(pool: sqlx::PgPool) {
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567891").unwrap(),
         vote_type: 1,
-        timestamp: 1755182913,
+        voted_at: 1755182913,
     };
 
     repository.update_user_votes(&[user_vote1.clone()]).await.unwrap();

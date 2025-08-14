@@ -11,5 +11,5 @@ pub struct UserVote {
     pub entity_id: EntityId,
     pub space_id: SpaceAddress,
     pub vote_type: u8,
-    pub timestamp: u64,
+    pub voted_at: u64,
 }

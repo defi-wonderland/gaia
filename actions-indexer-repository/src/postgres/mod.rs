@@ -74,14 +74,15 @@ impl PostgresActionsRepository {
         }
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "INSERT INTO raw_actions (type, version, sender, entity, group_id, space_pov, metadata, block_number, block_timestamp, tx_hash) "
+            "INSERT INTO raw_actions (action_type, action_version, sender, entity, group_id, space_pov, metadata, block_number, block_timestamp, tx_hash) "
         );
 
         query_builder.push_values(actions, |mut b, action| {
             match action {
                 Action::Vote(vote_action) => {
                     // TODO: extract to a helper function
-                    let timestamp = OffsetDateTime::from_unix_timestamp(vote_action.raw.block_timestamp as i64).unwrap();
+                    let voted_at = OffsetDateTime::from_unix_timestamp(vote_action.raw.block_timestamp as i64)
+                        .unwrap_or(OffsetDateTime::now_utc());
                     b.push_bind(vote_action.raw.action_type as i64)
                      .push_bind(vote_action.raw.version as i64)
                      .push_bind(format!("0x{}", hex::encode(vote_action.raw.sender.as_slice())))
@@ -90,7 +91,7 @@ impl PostgresActionsRepository {
                      .push_bind(format!("0x{}", hex::encode(vote_action.raw.space_pov.as_slice())))
                      .push_bind(vote_action.raw.metadata.as_ref().map(|b| b.as_ref().to_vec()))
                      .push_bind(vote_action.raw.block_number as i64)
-                     .push_bind(timestamp)
+                     .push_bind(voted_at)
                      .push_bind(format!("0x{}", hex::encode(vote_action.raw.tx_hash.as_slice())));
                 }
             }
@@ -122,18 +123,19 @@ impl PostgresActionsRepository {
         for vote in user_votes {
             sqlx::query!(
                 r#"
-                INSERT INTO user_votes (user_id, entity_id, space_id, vote_type, timestamp)
+                INSERT INTO user_votes (user_id, entity_id, space_id, vote_type, voted_at)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (user_id, entity_id, space_id)
                 DO UPDATE SET
                     vote_type = EXCLUDED.vote_type,
-                    timestamp = EXCLUDED.timestamp
+                    voted_at = EXCLUDED.voted_at
                 "#,
                 format!("0x{}", hex::encode(vote.user_id.as_slice())),
                 vote.entity_id.clone(),
                 format!("0x{}", hex::encode(vote.space_id.as_slice())),
                 vote.vote_type as i16,
-                OffsetDateTime::from_unix_timestamp(vote.timestamp as i64).unwrap()
+                OffsetDateTime::from_unix_timestamp(vote.voted_at as i64)
+                    .unwrap_or(OffsetDateTime::now_utc())
             )
             .execute(&mut **tx)
             .await?;
@@ -302,7 +304,7 @@ impl ActionsRepository for PostgresActionsRepository {
 
         let votes = sqlx::query!(
             r#"
-            SELECT user_id, entity_id, space_id, vote_type, timestamp
+            SELECT user_id, entity_id, space_id, vote_type, voted_at
             FROM user_votes
             WHERE (user_id, entity_id, space_id) IN (SELECT * FROM UNNEST($1::text[], $2::uuid[], $3::text[]))
             "#,
@@ -316,11 +318,11 @@ impl ActionsRepository for PostgresActionsRepository {
         let mut result_votes = Vec::with_capacity(votes.len());
         for v in votes {
             result_votes.push(UserVote {
-                user_id: Address::from_hex(&v.user_id).unwrap(),
+                user_id: Address::from_hex(&v.user_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.user_id))?,
                 entity_id: v.entity_id,
-                space_id: Address::from_hex(&v.space_id).unwrap(),
+                space_id: Address::from_hex(&v.space_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.space_id))?,
                 vote_type: v.vote_type as u8,
-                timestamp: v.timestamp.unix_timestamp() as u64,
+                voted_at: v.voted_at.unix_timestamp() as u64,
             });
         }
 
@@ -364,7 +366,7 @@ impl ActionsRepository for PostgresActionsRepository {
         for c in counts {
             result_counts.push(VotesCount {
                 entity_id: c.entity_id,
-                space_id: Address::from_hex(&c.space_id).unwrap(),
+                space_id: Address::from_hex(&c.space_id).map_err(|_| ActionsRepositoryError::InvalidAddress(c.space_id))?,
                 upvotes: c.upvotes,
                 downvotes: c.downvotes,
             });
