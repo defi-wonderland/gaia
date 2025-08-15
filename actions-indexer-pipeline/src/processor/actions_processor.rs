@@ -51,7 +51,11 @@ impl ProcessActions for ActionsProcessor {
             if let Some(handler) = handler {
                 if let Ok(result) = handler.handle(action) {
                     results.push(result);
+                } else {
+                    println!("Error processing action: {:?}", action);
                 }
+            } else {
+                println!("No handler found for action: {:?}", action);
             }
         }
         results
