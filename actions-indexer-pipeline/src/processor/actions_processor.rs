@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::processor::{HandleAction, ProcessActions};
-use actions_indexer_shared::types::{Action, ActionEvent};
+use actions_indexer_shared::types::{Action, ActionRaw};
 
 /// `ActionsProcessor` is responsible for processing raw `ActionEvent` data into structured `Action` data.
 /// It manages a registry of handlers for different action versions and kinds.
@@ -32,26 +32,30 @@ impl ActionsProcessor {
 }
 
 impl ProcessActions for ActionsProcessor {
-    /// Processes a slice of `ActionEvent`s and returns a vector of `Action`s.
+    /// Processes a slice of `ActionRaw`s and returns a vector of `Action`s.
     ///
-    /// This method takes an array of raw `ActionEvent`s, applies necessary processing rules,
+    /// This method takes an array of raw `ActionRaw`s, applies necessary processing rules,
     /// and converts them into a structured `Action` format.
     ///
     /// # Arguments
     ///
-    /// * `actions` - A slice of `ActionEvent`s to be processed.
+    /// * `actions` - A slice of `ActionRaw`s to be processed.
     ///
     /// # Returns
     ///
     /// A `Vec<Action>` on successful processing.
-    fn process(&self, actions: &[ActionEvent]) -> Vec<Action> {
+    fn process(&self, actions: &[ActionRaw]) -> Vec<Action> {
         let mut results = Vec::new();
         for action in actions {
-            let handler = self.handler_registry.get(&(action.version, action.kind));
+            let handler = self.handler_registry.get(&(action.action_version as u16, action.action_type as u16));
             if let Some(handler) = handler {
                 if let Ok(result) = handler.handle(action) {
                     results.push(result);
+                } else {
+                    println!("Error processing action: {:?}", action);
                 }
+            } else {
+                println!("No handler found for action: {:?}", action);
             }
         }
         results
@@ -64,7 +68,7 @@ mod tests {
 
     use crate::errors::ProcessorError;
     use crate::processor::{ActionsProcessor, HandleAction, ProcessActions};
-    use actions_indexer_shared::types::{Action, ActionEvent, Vote, VoteAction};
+    use actions_indexer_shared::types::{Action, ActionRaw, Vote, VoteAction};
     use alloy::hex::FromHex;
     use alloy::primitives::{Address, Bytes, TxHash};
     use uuid::uuid;
@@ -72,10 +76,10 @@ mod tests {
     struct MockHandler;
 
     impl HandleAction for MockHandler {
-        fn handle(&self, action: &ActionEvent) -> Result<Action, ProcessorError> {
+        fn handle(&self, action: &ActionRaw) -> Result<Action, ProcessorError> {
             Ok(Action::Vote(VoteAction {
                 raw: action.clone().into(),
-                vote: match action.payload[0] {
+                vote: match action.metadata.as_ref().unwrap()[0] {
                     0 => Vote::Up,
                     1 => Vote::Down,
                     2 => Vote::Remove,
@@ -85,15 +89,15 @@ mod tests {
         }
     }
 
-    fn make_action_event(payload_byte: u8) -> ActionEvent {
-        ActionEvent {
+    fn make_action_event(payload_byte: u8) -> ActionRaw {
+        ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            kind: 1,
-            version: 1,
+            action_type: 1,
+            action_version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            payload: Bytes::from(vec![payload_byte]),
+            group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
+            metadata: Some(Bytes::from(vec![payload_byte])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(
@@ -103,7 +107,7 @@ mod tests {
         }
     }
 
-    fn assert_is_vote_action(action: &Action, event: &ActionEvent, expected_vote: Vote) {
+    fn assert_is_vote_action(action: &Action, event: &ActionRaw, expected_vote: Vote) {
         assert_eq!(
             action,
             &Action::Vote(VoteAction {
@@ -170,14 +174,14 @@ mod tests {
     #[test]
     fn test_process_invalid_action_type() {
         let processor = mocked_processor();
-        let action_event = ActionEvent {
+        let action_event = ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            kind: 2, // no handler defined for this action type
-            version: 1,
+            action_type: 2, // no handler defined for this action type
+            action_version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            payload: Bytes::from(vec![0]),
+            group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
+            metadata: Some(Bytes::from(vec![0])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(

@@ -4,7 +4,6 @@
 use alloy::primitives::Address;
 use uuid::Uuid;
 
-mod action_event;
 mod action;
 mod user_vote;
 mod votes_count;
@@ -12,7 +11,6 @@ mod changeset;
 mod action_raw;
 mod action_vote;
 
-pub use action_event::ActionEvent;
 pub use action::Action;
 pub use user_vote::UserVote;
 pub use votes_count::VotesCount;

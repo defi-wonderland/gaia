@@ -16,7 +16,7 @@ use sqlx::Row;
 fn make_raw_action() -> ActionRaw {
     ActionRaw {
         action_type: 1,
-        version: 1,
+        action_version: 1,
         sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
         entity: Uuid::new_v4(),
         group_id: None,

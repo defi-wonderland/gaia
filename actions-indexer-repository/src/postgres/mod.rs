@@ -84,7 +84,7 @@ impl PostgresActionsRepository {
                     let voted_at = OffsetDateTime::from_unix_timestamp(vote_action.raw.block_timestamp as i64)
                         .unwrap_or(OffsetDateTime::now_utc());
                     b.push_bind(vote_action.raw.action_type as i64)
-                     .push_bind(vote_action.raw.version as i64)
+                     .push_bind(vote_action.raw.action_version as i64)
                      .push_bind(format!("0x{}", hex::encode(vote_action.raw.sender.as_slice())))
                      .push_bind(vote_action.raw.entity.clone())
                      .push_bind(vote_action.raw.group_id.clone())

@@ -1,4 +1,4 @@
-use crate::types::{ActionEvent, UserAddress, SpaceAddress, EntityId, GroupId};
+use crate::types::{UserAddress, SpaceAddress, EntityId, GroupId};
 use alloy::primitives::{BlockNumber, BlockTimestamp, Bytes, TxHash};
 
 
@@ -9,7 +9,7 @@ use alloy::primitives::{BlockNumber, BlockTimestamp, Bytes, TxHash};
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActionRaw {
     pub action_type: u64,
-    pub version: u64,
+    pub action_version: u64,
     pub sender: UserAddress,
     pub entity: EntityId,
     pub group_id: Option<GroupId>,
@@ -18,28 +18,4 @@ pub struct ActionRaw {
     pub block_number: BlockNumber,
     pub block_timestamp: BlockTimestamp,
     pub tx_hash: TxHash,
-}
-
-/// Implements conversion from `ActionEvent` to `ActionRaw`.
-///
-/// This conversion extracts relevant fields from a raw `ActionEvent`
-/// and maps them to the corresponding fields in the `ActionRaw` struct.
-impl From<ActionEvent> for ActionRaw {
-    fn from(event: ActionEvent) -> Self {
-        let group_id = (!event.group_id.is_nil()).then(|| event.group_id.clone());
-        let metadata = (!event.payload.is_empty()).then(|| event.payload.clone());
-
-        ActionRaw {
-            action_type: u64::from(event.kind),
-            version: u64::from(event.version),
-            sender: event.sender,
-            entity: event.entity,
-            group_id,
-            space_pov: event.space_pov,
-            metadata,
-            block_number: event.block_number,
-            block_timestamp: event.block_timestamp,
-            tx_hash: event.tx_hash,
-        }
-    }
 }
