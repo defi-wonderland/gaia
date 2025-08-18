@@ -55,9 +55,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Cache cargo/target
         uses: Swatinem/rust-cache@v2
         with:
@@ -69,6 +66,13 @@ jobs:
             echo "Waiting for PostgreSQL..."
             sleep 2
           done
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
+      - name: Run migrations
+        working-directory: actions-indexer-repository
+        run: sqlx migrate run --source src/postgres/migrations
 
       - name: Run integration tests
         env:
