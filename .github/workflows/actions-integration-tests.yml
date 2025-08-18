@@ -74,6 +74,10 @@ jobs:
         working-directory: actions-indexer-repository
         run: sqlx migrate run --source src/postgres/migrations
 
+      - name: Generate sqlx query cache
+        working-directory: actions-indexer-repository
+        run: cargo sqlx prepare
+
       - name: Run integration tests
         env:
           RUST_BACKTRACE: 1
