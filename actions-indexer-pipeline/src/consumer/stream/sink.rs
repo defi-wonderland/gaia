@@ -169,6 +169,7 @@ impl Sink {
     
 }
 
+#[async_trait::async_trait]
 impl ConsumeActions for Sink {
     async fn stream_events(&self) -> Result<SubstreamsStream, ConsumerError> {
         let package = read_package(&self.package_file, self.params.clone()).await.map_err(|e| ConsumerError::ReadingPackage(e.to_string()))?;
@@ -187,6 +188,13 @@ impl ConsumeActions for Sink {
             block_range.0,
             block_range.1
         ))
+    }
+
+    async fn decode_block_scoped_data(&self, block_data: &BlockScopedData) -> Result<Vec<ActionRaw>, ConsumerError> {
+        let output = block_data.output.as_ref().unwrap().map_output.as_ref().unwrap();
+        let actions = Actions::decode(output.value.as_slice()).map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
+        let raw_actions = actions.actions.iter().map(|action| ActionRaw::from(action)).collect::<Vec<ActionRaw>>();
+        Ok(raw_actions)
     }
 }
 
