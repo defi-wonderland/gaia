@@ -79,11 +79,11 @@ mod tests {
         fn handle(&self, action: &ActionRaw) -> Result<Action, ProcessorError> {
             Ok(Action::Vote(VoteAction {
                 raw: action.clone().into(),
-                vote: match action.payload[0] {
+                vote: match action.payload.as_ref().unwrap()[0] {
                     0 => Vote::Up,
                     1 => Vote::Down,
                     2 => Vote::Remove,
-                    _ => return Err(ProcessorError::Placeholder),
+                    _ => return Err(ProcessorError::InvalidVote),
                 },
             }))
         }
@@ -96,8 +96,8 @@ mod tests {
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            payload: Bytes::from(vec![payload_byte]),
+            group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
+            payload: Some(Bytes::from(vec![payload_byte])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(
@@ -180,8 +180,8 @@ mod tests {
             version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            group_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            payload: Bytes::from(vec![0]),
+            group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
+            payload: Some(Bytes::from(vec![0])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(
