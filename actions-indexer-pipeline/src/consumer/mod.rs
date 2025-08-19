@@ -3,7 +3,6 @@
 //! Provides the `ConsumeActions` trait for consuming blockchain action events
 //! from data sources like substreams. Acts as the entry point for the pipeline,
 //! feeding data to processing and loading components.
-
 use crate::errors::ConsumerError;
 
 pub mod stream;
