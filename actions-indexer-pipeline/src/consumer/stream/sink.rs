@@ -102,7 +102,7 @@ impl Sink {
         Ok(())
     }
 
-    pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<Vec<ActionRaw>, Error> {
+    pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<(), Error> {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
     
         // You can decode the actual Any type received using this code:
@@ -112,28 +112,21 @@ impl Sink {
         // Where GeneratedStructName is the Rust code generated for the Protobuf representing
         // your type, so you will need generate it using `substreams protogen` and import it from the
         // `src/pb` folder.
-    
-        // Decode the Actions message using the protobuf generated code
-        let actions = Actions::decode(output.value.as_slice())?;
-    
-        // Convert the Actions message to a vector of ActionRaw
-        let raw_actions = actions.actions.iter().map(|action| ActionRaw::from(action)).collect::<Vec<ActionRaw>>();
-    
+        
         let clock = data.clock.as_ref().unwrap();
         let timestamp = clock.timestamp.as_ref().unwrap();
         let date = DateTime::from_timestamp(timestamp.seconds, timestamp.nanos as u32)
             .expect("received timestamp should always be valid");
     
         println!(
-            "Block #{} - Payload {} ({} bytes) - Drift {}s - Events {}",
+            "Block #{} - Payload {} ({} bytes) - Drift {}s",
             clock.number,
             output.type_url.replace("type.googleapis.com/", ""),
             output.value.len(), 
             date.signed_duration_since(chrono::offset::Utc::now()).num_seconds() * -1, 
-            actions.actions.len()
         );
     
-        Ok(raw_actions)
+        Ok(())
     }
     
     pub fn process_block_undo_signal(&self, _undo_signal: &BlockUndoSignal) -> Result<(), anyhow::Error> {
