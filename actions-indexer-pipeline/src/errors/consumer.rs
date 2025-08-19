@@ -20,4 +20,8 @@ pub enum ConsumerError {
     LoadingCursor(String),
     #[error("Stream error: {0}")]
     StreamError(String),
+    #[error("Error decoding actions: {0}")]
+    DecodingActions(String),
+    #[error("Error processing block undo signal: {0}")] 
+    ProcessingBlockUndoSignal(String),
 }
