@@ -10,4 +10,14 @@ use thiserror::Error;
 pub enum ConsumerError {
     #[error("Placeholder error - implementation pending")]
     Placeholder,
+    #[error("Error reading package: {0}")]
+    ReadingPackage(String),
+    #[error("Error reading block range: {0}")]
+    ReadingBlockRange(String),
+    #[error("Error reading endpoint: {0}")]
+    ReadingEndpoint(String),
+    #[error("Error loading cursor: {0}")]
+    LoadingCursor(String),
+    #[error("Stream error: {0}")]
+    StreamError(String),
 }
