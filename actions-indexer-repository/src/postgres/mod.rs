@@ -1,102 +1,204 @@
-//! This module provides the PostgreSQL implementation of the `ActionsRepository` trait.
-//! It handles database interactions for persisting actions, user votes, and vote counts.
+//! PostgreSQL implementation of the actions indexer repository.
+//!
+//! Provides a production-ready PostgreSQL backend for the `ActionsRepository` trait
+//! with connection pooling, transaction safety, and batch operations.
+//!
+//! ## Key Features
+//!
+//! - Connection pooling with `sqlx::PgPool`
+//! - ACID transactions with automatic rollback
+//! - Bulk operations using PostgreSQL's `UNNEST` and `VALUES`
+//! - Upsert support with `ON CONFLICT DO UPDATE`
+//! - Type-safe queries with SQLx
+//!
+//! ## Database Tables
+//!
+//! - `raw_actions`: Processed blockchain actions
+//! - `user_votes`: Individual voting records with upsert support
+//! - `votes_count`: Aggregated vote tallies per entity/space
 use async_trait::async_trait;
-use actions_indexer_shared::types::{Action, Changeset, UserVote, VotesCount};
+use actions_indexer_shared::types::{Action, Changeset, UserVote, VotesCount, EntityId, VoteCriteria, VoteCountCriteria};
 use crate::{ActionsRepository, ActionsRepositoryError};
+use hex;
+use time::OffsetDateTime;
+use alloy::{primitives::Address, hex::FromHex};
 
-/// A PostgreSQL implementation of the `ActionsRepository` trait.
+/// PostgreSQL implementation of the actions indexer repository.
 ///
-/// This struct manages database connections and provides concrete implementations
-/// for persisting and retrieving action-related data in a PostgreSQL database.
+/// Provides database operations for actions, user votes, and vote counts using
+/// PostgreSQL with connection pooling and transaction support.
+///
+/// ## Features
+///
+/// - Connection pooling with `sqlx::PgPool`
+/// - Automatic transaction wrapping for all operations
+/// - Bulk operations using `QueryBuilder` for performance
+/// - Upsert operations with conflict resolution
+/// - Efficient batch queries using `UNNEST`
 pub struct PostgresActionsRepository {
     pool: sqlx::PgPool,
 }
 
 impl PostgresActionsRepository {
-    /// Creates a new `PostgresActionsRepository` instance.
-    ///
-    /// Establishes a connection pool to the PostgreSQL database using the provided URL.
+    /// Creates a new PostgreSQL repository instance.
     ///
     /// # Arguments
     ///
-    /// * `url` - The connection string for the PostgreSQL database.
+    /// * `pool` - Configured PostgreSQL connection pool with required schema
     ///
     /// # Returns
     ///
-    /// A `Result` which is `Ok(Self)` on successful connection or an
-    /// `ActionsRepositoryError` if the database connection fails.
-    pub async fn new(url: &str) -> Result<Self, ActionsRepositoryError> {
-        let pool = sqlx::PgPool::connect(url).await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+    /// * `Ok(PostgresActionsRepository)` - Ready-to-use repository instance
+    /// * `Err(ActionsRepositoryError)` - Future validation errors (currently always succeeds)
+    pub async fn new(pool: sqlx::PgPool) -> Result<Self, ActionsRepositoryError> {
         Ok(Self { pool })
     }
 
-    /// Inserts a slice of `Action` objects within an existing database transaction.
+    /// Inserts actions within an active transaction using bulk operations.
     ///
-    /// This private helper method is used by public `ActionsRepository` methods
-    /// to ensure transactional integrity when persisting actions.
+    /// Uses `QueryBuilder` for efficient multi-row INSERT into `raw_actions` table.
+    /// Handles blockchain addresses as hex-encoded strings and timestamps as PostgreSQL timestamps.
     ///
     /// # Arguments
     ///
-    /// * `actions` - A slice of `Action` objects to be inserted.
-    /// * `tx` - A mutable reference to an active `sqlx::Transaction`.
+    /// * `actions` - Actions to insert (empty slices are no-ops)
+    /// * `tx` - Active transaction context
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the insertion fails.
-    async fn insert_actions_tx(&self, _actions: &[Action], _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
-        todo!("Implement insert_actions_tx for Postgres")
+    /// * `Ok(())` - All actions inserted successfully
+    /// * `Err(ActionsRepositoryError)` - Database or encoding error
+    async fn insert_actions_tx(&self, actions: &[Action], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        if actions.is_empty() {
+            return Ok(());
+        }
+
+        let mut query_builder = sqlx::QueryBuilder::new(
+            "INSERT INTO raw_actions (action_type, action_version, sender, entity, group_id, space_pov, metadata, block_number, block_timestamp, tx_hash) "
+        );
+
+        query_builder.push_values(actions, |mut b, action| {
+            match action {
+                Action::Vote(vote_action) => {
+                    // TODO: extract to a helper function
+                    let voted_at = OffsetDateTime::from_unix_timestamp(vote_action.raw.block_timestamp as i64)
+                        .unwrap_or(OffsetDateTime::now_utc());
+                    b.push_bind(vote_action.raw.action_type as i64)
+                     .push_bind(vote_action.raw.action_version as i64)
+                     .push_bind(format!("0x{}", hex::encode(vote_action.raw.sender.as_slice())))
+                     .push_bind(vote_action.raw.entity.clone())
+                     .push_bind(vote_action.raw.group_id.clone())
+                     .push_bind(format!("0x{}", hex::encode(vote_action.raw.space_pov.as_slice())))
+                     .push_bind(vote_action.raw.metadata.as_ref().map(|b| b.as_ref().to_vec()))
+                     .push_bind(vote_action.raw.block_number as i64)
+                     .push_bind(voted_at)
+                     .push_bind(format!("0x{}", hex::encode(vote_action.raw.tx_hash.as_slice())));
+                }
+            }
+        });
+
+        query_builder.build().execute(&mut **tx).await?;
+        Ok(())
     }
 
-    /// Updates a slice of `UserVote` objects within an existing database transaction.
+    /// Updates user votes within an active transaction using upsert operations.
     ///
-    /// This private helper method is used by public `ActionsRepository` methods
-    /// to ensure transactional integrity when updating user votes.
+    /// Uses `ON CONFLICT DO UPDATE` for each vote record targeting the `user_votes` table
+    /// with composite key (user_id, entity_id, space_id). Addresses are hex-encoded.
     ///
     /// # Arguments
     ///
-    /// * `user_votes` - A slice of `UserVote` objects to be updated.
-    /// * `tx` - A mutable reference to an active `sqlx::Transaction`.
+    /// * `user_votes` - Vote records to upsert (empty slices are no-ops)
+    /// * `tx` - Active transaction context
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the update fails.
-    async fn update_user_votes_tx(&self, _user_votes: &[UserVote], _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
-        todo!("Implement update_user_votes_tx for Postgres")
+    /// * `Ok(())` - All votes processed successfully
+    /// * `Err(ActionsRepositoryError)` - Database or encoding error
+    async fn update_user_votes_tx(&self, user_votes: &[UserVote], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        if user_votes.is_empty() {
+            return Ok(());
+        }
+
+        for vote in user_votes {
+            sqlx::query!(
+                r#"
+                INSERT INTO user_votes (user_id, entity_id, space_id, vote_type, voted_at)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (user_id, entity_id, space_id)
+                DO UPDATE SET
+                    vote_type = EXCLUDED.vote_type,
+                    voted_at = EXCLUDED.voted_at
+                "#,
+                format!("0x{}", hex::encode(vote.user_id.as_slice())),
+                vote.entity_id.clone(),
+                format!("0x{}", hex::encode(vote.space_id.as_slice())),
+                vote.vote_type as i16,
+                OffsetDateTime::from_unix_timestamp(vote.voted_at as i64)
+                    .unwrap_or(OffsetDateTime::now_utc())
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
+        Ok(())
     }
 
-    /// Updates a slice of `VotesCount` objects within an existing database transaction.
+    /// Updates vote count aggregations within an active transaction.
     ///
-    /// This private helper method is used by public `ActionsRepository` methods
-    /// to ensure transactional integrity when updating vote counts.
+    /// Uses upsert operations on `votes_count` table with composite key (entity_id, space_id).
+    /// Replaces existing totals with new values to maintain accurate statistics.
     ///
     /// # Arguments
     ///
-    /// * `votes_counts` - A slice of `VotesCount` objects to be updated.
-    /// * `tx` - A mutable reference to an active `sqlx::Transaction`.
+    /// * `votes_counts` - Count records to upsert (empty slices are no-ops)
+    /// * `tx` - Active transaction context
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the update fails.
-    async fn update_votes_counts_tx(&self, _votes_counts: &[VotesCount], _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
-        todo!("Implement update_votes_counts_tx for Postgres")
+    /// * `Ok(())` - All counts updated successfully
+    /// * `Err(ActionsRepositoryError)` - Database or encoding error
+    async fn update_votes_counts_tx(&self, votes_counts: &[VotesCount], tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<(), ActionsRepositoryError> {
+        if votes_counts.is_empty() {
+            return Ok(());
+        }
+
+        for count in votes_counts { 
+            sqlx::query!(
+                r#"
+                INSERT INTO votes_count (entity_id, space_id, upvotes, downvotes)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (entity_id, space_id)
+                DO UPDATE SET 
+                    upvotes = EXCLUDED.upvotes,
+                    downvotes = EXCLUDED.downvotes
+                "#,
+                count.entity_id.clone(),
+                format!("0x{}", hex::encode(count.space_id.as_slice())),
+                count.upvotes,
+                count.downvotes
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
 impl ActionsRepository for PostgresActionsRepository {
-    /// Inserts a slice of `Action` objects into the repository within a new transaction.
+    /// Inserts actions into the repository using a new transaction.
     ///
-    /// This method creates a new database transaction, calls `insert_actions_tx` to perform
-    /// the insertion, and then commits the transaction.
+    /// Creates a transaction, performs bulk insertion, and commits atomically.
+    /// Empty slices are handled efficiently as no-ops.
     ///
     /// # Arguments
     ///
-    /// * `actions` - A slice of `Action` objects to be inserted.
+    /// * `actions` - Actions to insert
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the transaction
-    /// or insertion fails.
+    /// * `Ok(())` - All actions inserted successfully
+    /// * `Err(ActionsRepositoryError)` - Transaction or insertion failure
     async fn insert_actions(
         &self,
         actions: &[Action],
@@ -107,19 +209,19 @@ impl ActionsRepository for PostgresActionsRepository {
         Ok(())
     }
 
-    /// Updates a slice of `UserVote` objects in the repository within a new transaction.
+    /// Updates user votes using upsert operations in a new transaction.
     ///
-    /// This method creates a new database transaction, calls `update_user_votes_tx` to perform
-    /// the update, and then commits the transaction.
+    /// Handles conflicts by updating existing votes with new data.
+    /// Empty slices are handled efficiently as no-ops.
     ///
     /// # Arguments
     ///
-    /// * `user_votes` - A slice of `UserVote` objects to be updated.
+    /// * `user_votes` - User votes to update/insert
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the transaction
-    /// or update fails.
+    /// * `Ok(())` - All votes updated successfully
+    /// * `Err(ActionsRepositoryError)` - Transaction or update failure
     async fn update_user_votes(
         &self,
         user_votes: &[UserVote],
@@ -130,19 +232,19 @@ impl ActionsRepository for PostgresActionsRepository {
         Ok(())
     }
 
-    /// Updates a slice of `VotesCount` objects in the repository within a new transaction.
+    /// Updates aggregated vote counts in a new transaction.
     ///
-    /// This method creates a new database transaction, calls `update_votes_counts_tx` to perform
-    /// the update, and then commits the transaction.
+    /// Replaces existing count totals for each entity-space combination.
+    /// Empty slices are handled efficiently as no-ops.
     ///
     /// # Arguments
     ///
-    /// * `votes_counts` - A slice of `VotesCount` objects to be updated.
+    /// * `votes_counts` - Vote count records to update
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the transaction
-    /// or update fails.
+    /// * `Ok(())` - All counts updated successfully
+    /// * `Err(ActionsRepositoryError)` - Transaction or update failure
     async fn update_votes_counts(
         &self,
         votes_counts: &[VotesCount],
@@ -153,21 +255,19 @@ impl ActionsRepository for PostgresActionsRepository {
         Ok(())
     }
 
-    /// Persists a `Changeset` object to the repository within a new transaction.
+    /// Atomically persists a complete changeset in a single transaction.
     ///
-    /// This method creates a new database transaction and then calls the private
-    /// transactional helper methods (`insert_actions_tx`, `update_user_votes_tx`,
-    /// and `update_votes_counts_tx`) to persist the components of the changeset.
-    /// The transaction is committed upon success.
+    /// Bundles actions, user votes, and vote counts together for atomic persistence.
+    /// Either all changes succeed or all are rolled back on failure.
     ///
     /// # Arguments
     ///
-    /// * `changeset` - A reference to the `Changeset` object to be persisted.
+    /// * `changeset` - Changeset containing related data modifications
     ///
     /// # Returns
     ///
-    /// A `Result` indicating success or an `ActionsRepositoryError` if the transaction
-    /// or any persistence operation fails.
+    /// * `Ok(())` - Entire changeset persisted successfully
+    /// * `Err(ActionsRepositoryError)` - Transaction failure with automatic rollback
     async fn persist_changeset(
         &self,
         changeset: &Changeset<'_>,
@@ -178,5 +278,100 @@ impl ActionsRepository for PostgresActionsRepository {
         self.update_votes_counts_tx(changeset.votes_count, &mut tx).await?;
         tx.commit().await.map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
         Ok(())
+    }
+
+    /// Retrieves user votes matching the specified criteria.
+    ///
+    /// Uses PostgreSQL's UNNEST function for efficient batch queries of multiple
+    /// user-entity-space combinations in a single database operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `vote_criteria` - Tuples of (user_id, entity_id, space_id) to query
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<UserVote>)` - Matching votes (empty if none found)
+    /// * `Err(ActionsRepositoryError)` - Database query failure
+    async fn get_user_votes(&self, vote_criteria: &[VoteCriteria]) -> Result<Vec<UserVote>, ActionsRepositoryError> {
+        if vote_criteria.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let user_ids: Vec<String> = vote_criteria.iter().map(|(u, _, _)| format!("0x{}", hex::encode(u.as_slice()))).collect();
+        let entity_ids: Vec<EntityId> = vote_criteria.iter().map(|(_, e, _)| *e).collect();
+        let space_ids: Vec<String> = vote_criteria.iter().map(|(_, _, s)| format!("0x{}", hex::encode(s.as_slice()))).collect();
+
+        let votes = sqlx::query!(
+            r#"
+            SELECT user_id, entity_id, space_id, vote_type, voted_at
+            FROM user_votes
+            WHERE (user_id, entity_id, space_id) IN (SELECT * FROM UNNEST($1::text[], $2::uuid[], $3::text[]))
+            "#,
+            &user_ids,
+            &entity_ids,
+            &space_ids,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result_votes = Vec::with_capacity(votes.len());
+        for v in votes {
+            result_votes.push(UserVote {
+                user_id: Address::from_hex(&v.user_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.user_id))?,
+                entity_id: v.entity_id,
+                space_id: Address::from_hex(&v.space_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.space_id))?,
+                vote_type: v.vote_type as u8,
+                voted_at: v.voted_at.unix_timestamp() as u64,
+            });
+        }
+
+        Ok(result_votes)
+    }
+
+    /// Retrieves aggregated vote counts for entities and spaces.
+    ///
+    /// Efficiently queries vote statistics using PostgreSQL's UNNEST function for
+    /// batch lookups of entity-space combinations.
+    ///
+    /// # Arguments
+    ///
+    /// * `vote_criteria` - Tuples of (entity_id, space_id) to query
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<VotesCount>)` - Matching vote counts (empty if none found)
+    /// * `Err(ActionsRepositoryError)` - Database query failure
+    async fn get_vote_counts(&self, vote_criteria: &[VoteCountCriteria]) -> Result<Vec<VotesCount>, ActionsRepositoryError> {
+        if vote_criteria.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entity_ids: Vec<EntityId> = vote_criteria.iter().map(|(e, _)| *e).collect();
+        let space_ids: Vec<String> = vote_criteria.iter().map(|(_, s)| format!("0x{}", hex::encode(s.as_slice()))).collect();
+
+        let counts = sqlx::query!(
+            r#"
+            SELECT entity_id, space_id, upvotes, downvotes
+            FROM votes_count
+            WHERE (entity_id, space_id) IN (SELECT * FROM UNNEST($1::uuid[], $2::text[]))
+            "#,
+            &entity_ids,
+            &space_ids,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result_counts = Vec::with_capacity(counts.len());
+        for c in counts {
+            result_counts.push(VotesCount {
+                entity_id: c.entity_id,
+                space_id: Address::from_hex(&c.space_id).map_err(|_| ActionsRepositoryError::InvalidAddress(c.space_id))?,
+                upvotes: c.upvotes,
+                downvotes: c.downvotes,
+            });
+        }
+
+        Ok(result_counts)
     }
 }
