@@ -79,7 +79,7 @@ mod tests {
         fn handle(&self, action: &ActionRaw) -> Result<Action, ProcessorError> {
             Ok(Action::Vote(VoteAction {
                 raw: action.clone().into(),
-                vote: match action.payload.as_ref().unwrap()[0] {
+                vote: match action.metadata.as_ref().unwrap()[0] {
                     0 => Vote::Up,
                     1 => Vote::Down,
                     2 => Vote::Remove,
