@@ -385,8 +385,8 @@ impl From<&Action> for ActionRaw {
     fn from(action: &Action) -> Self {
         ActionRaw {
             sender: action.sender.parse().unwrap(),
-            kind: action.action_type as u16,
-            version: action.action_version as u16,
+            action_type: action.action_type,
+            action_version: action.action_version,
             space_pov: action.space_pov.parse().unwrap(),
             entity: action.entity.parse().unwrap(),
             group_id: if action.group_id.is_some() {
@@ -394,7 +394,7 @@ impl From<&Action> for ActionRaw {
             } else {
                 None
             },
-            payload: action.metadata.as_ref().map(|metadata| metadata.to_vec().into()),
+            metadata: action.metadata.as_ref().map(|metadata| metadata.to_vec().into()),
             block_number: action.block_number.into(),
             block_timestamp: action.block_timestamp.into(),
             tx_hash: action.tx_hash.parse().unwrap(),
