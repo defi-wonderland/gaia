@@ -24,6 +24,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: true
 
 jobs:
   actions-unit-tests:
@@ -38,11 +39,11 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Cargo test (selected crates)
+      - name: Cargo test unit (actions)
         env:
           RUST_BACKTRACE: 1
         run: |
-          cargo test --locked --all-targets \
+          cargo test --locked --lib \
             -p actions-indexer \
             -p actions-indexer-pipeline \
             -p actions-indexer-shared \

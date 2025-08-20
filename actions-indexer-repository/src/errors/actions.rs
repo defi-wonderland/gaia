@@ -10,4 +10,10 @@ use thiserror::Error;
 pub enum ActionsRepositoryError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] sqlx::Error),
+
+    #[error("Invalid address: {0}")]
+    InvalidAddress(String),
+
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(u64),
 }

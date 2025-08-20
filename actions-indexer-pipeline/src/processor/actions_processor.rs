@@ -47,7 +47,7 @@ impl ProcessActions for ActionsProcessor {
     fn process(&self, actions: &[ActionRaw]) -> Vec<Action> {
         let mut results = Vec::new();
         for action in actions {
-            let handler = self.handler_registry.get(&(action.version, action.kind));
+            let handler = self.handler_registry.get(&(action.action_version as u16, action.action_type as u16));
             if let Some(handler) = handler {
                 if let Ok(result) = handler.handle(action) {
                     results.push(result);
@@ -92,12 +92,12 @@ mod tests {
     fn make_action_event(payload_byte: u8) -> ActionRaw {
         ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            kind: 1,
-            version: 1,
+            action_type: 1,
+            action_version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
-            payload: Some(Bytes::from(vec![payload_byte])),
+            metadata: Some(Bytes::from(vec![payload_byte])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(
@@ -176,12 +176,12 @@ mod tests {
         let processor = mocked_processor();
         let action_event = ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            kind: 2, // no handler defined for this action type
-            version: 1,
+            action_type: 2, // no handler defined for this action type
+            action_version: 1,
             space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
-            payload: Some(Bytes::from(vec![0])),
+            metadata: Some(Bytes::from(vec![0])),
             block_number: 1,
             block_timestamp: 1,
             tx_hash: TxHash::from_hex(
