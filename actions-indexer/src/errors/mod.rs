@@ -5,4 +5,8 @@
 pub enum IndexingError {
     #[error("Orchestrator error: {0}")]
     Orchestrator(#[from] actions_indexer_pipeline::errors::OrchestratorError),
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("Repository error: {0}")]
+    Repository(#[from] actions_indexer_repository::ActionsRepositoryError),
 }
