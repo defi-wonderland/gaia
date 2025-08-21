@@ -16,7 +16,7 @@ pub use user_vote::UserVote;
 pub use votes_count::VotesCount;
 pub use changeset::Changeset;
 pub use action_raw::ActionRaw;
-pub use action_vote::{Vote, VoteAction};
+pub use action_vote::{Vote, VoteValue};
 
 pub type EntityId = Uuid;
 pub type GroupId = Uuid;
