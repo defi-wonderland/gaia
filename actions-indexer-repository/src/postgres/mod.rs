@@ -17,7 +17,7 @@
 //! - `user_votes`: Individual voting records with upsert support
 //! - `votes_count`: Aggregated vote tallies per entity/space
 use async_trait::async_trait;
-use actions_indexer_shared::types::{Action, Changeset, UserVote, VotesCount, EntityId, VoteCriteria, VoteCountCriteria};
+use actions_indexer_shared::types::{Action, Changeset, UserVote, VotesCount, EntityId, VoteCriteria, VoteCountCriteria, VoteValue};
 use crate::{ActionsRepository, ActionsRepositoryError};
 use hex;
 use time::OffsetDateTime;
@@ -133,7 +133,11 @@ impl PostgresActionsRepository {
                 format!("0x{}", hex::encode(vote.user_id.as_slice())),
                 vote.entity_id.clone(),
                 format!("0x{}", hex::encode(vote.space_id.as_slice())),
-                vote.vote_type as i16,
+                match vote.vote_type {
+                    VoteValue::Up => 0,
+                    VoteValue::Down => 1,
+                    VoteValue::Remove => 2,
+                } as i16,
                 OffsetDateTime::from_unix_timestamp(vote.voted_at as i64)
                     .unwrap_or(OffsetDateTime::now_utc())
             )
@@ -321,7 +325,12 @@ impl ActionsRepository for PostgresActionsRepository {
                 user_id: Address::from_hex(&v.user_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.user_id))?,
                 entity_id: v.entity_id,
                 space_id: Address::from_hex(&v.space_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.space_id))?,
-                vote_type: v.vote_type as u8,
+                vote_type: match v.vote_type {
+                    0 => VoteValue::Up,
+                    1 => VoteValue::Down,
+                    2 => VoteValue::Remove,
+                    _ => return Err(ActionsRepositoryError::DatabaseError(sqlx::Error::RowNotFound)),
+                },
                 voted_at: v.voted_at.unix_timestamp() as u64,
             });
         }
