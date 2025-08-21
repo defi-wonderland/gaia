@@ -7,7 +7,6 @@ use crate::consumer::{ActionsConsumer, StreamMessage};
 use crate::processor::ActionsProcessor;
 use crate::loader::ActionsLoader;
 use tokio::sync::mpsc;
-use std::process::exit;
 
 /// `Orchestrator` is responsible for coordinating the consumption, processing,
 /// and loading of actions.
@@ -67,7 +66,7 @@ impl Orchestrator {
         while let Some(message) = rx.recv().await {
             match message {
                 StreamMessage::BlockData(block_data) => {
-                    
+                    println!("BlockData: {:?}", block_data);
                 }
                 StreamMessage::UndoSignal(undo_signal) => {
                     println!("UndoSignal: {:?}", undo_signal);
