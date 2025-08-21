@@ -6,7 +6,7 @@ use actions_indexer_shared::types::{Action, ActionRaw};
 /// `ActionsProcessor` is responsible for processing raw `ActionEvent` data into structured `Action` data.
 /// It manages a registry of handlers for different action versions and kinds.
 pub struct ActionsProcessor {
-    handler_registry: HashMap<(u16, u16), Arc<dyn HandleAction>>,
+    handler_registry: HashMap<(u64, u64), Arc<dyn HandleAction>>,
 }
 
 impl ActionsProcessor {
@@ -26,7 +26,7 @@ impl ActionsProcessor {
     /// * `kind` - The kind of the action to register the handler for.
     /// * `handler` - An `Arc` boxed trait object that implements `HandleAction`,
     ///             responsible for processing the specific action type.
-    pub fn register_handler(&mut self, version: u16, kind: u16, handler: Arc<dyn HandleAction>) {
+    pub fn register_handler(&mut self, version: u64, kind: u64, handler: Arc<dyn HandleAction>) {
         self.handler_registry.insert((version, kind), handler);
     }
 }
@@ -47,7 +47,7 @@ impl ProcessActions for ActionsProcessor {
     fn process(&self, actions: &[ActionRaw]) -> Vec<Action> {
         let mut results = Vec::new();
         for action in actions {
-            let handler = self.handler_registry.get(&(action.action_version as u16, action.action_type as u16));
+            let handler = self.handler_registry.get(&(action.action_version, action.action_type));
             if let Some(handler) = handler {
                 if let Ok(result) = handler.handle(action) {
                     results.push(result);

@@ -16,7 +16,7 @@ pub enum VoteValue {
 ///
 /// This struct combines the raw action data with the specific vote type,
 /// providing a structured representation of a user's vote.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct Vote {
     pub raw: ActionRaw,
     pub vote: VoteValue,

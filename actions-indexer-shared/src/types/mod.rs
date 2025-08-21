@@ -1,6 +1,5 @@
 //! This module defines the core data structures and types used across the actions indexer.
-//! It re-exports specific types like `ActionEvent`, `Action`, `UserVote`, `VotesCount`, `Changeset`, `ActionRaw`, `Vote`, and `VoteAction`.
-
+//! It re-exports specific types like `Action`, `UserVote`, `VotesCount`, `Changeset`, `ActionRaw`, `Vote`, and `VoteValue`.
 use alloy::primitives::Address;
 use uuid::Uuid;
 

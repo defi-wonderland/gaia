@@ -329,7 +329,7 @@ impl ActionsRepository for PostgresActionsRepository {
                     0 => VoteValue::Up,
                     1 => VoteValue::Down,
                     2 => VoteValue::Remove,
-                    _ => return Err(ActionsRepositoryError::DatabaseError(sqlx::Error::RowNotFound)),
+                    _ => return Err(ActionsRepositoryError::InvalidVoteType(v.vote_type)),
                 },
                 voted_at: v.voted_at.unix_timestamp() as u64,
             });

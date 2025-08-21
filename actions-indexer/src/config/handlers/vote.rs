@@ -25,9 +25,9 @@ impl HandleAction for VoteHandler {
         Ok(Action::Vote(Vote {
             raw: action.clone().into(),
             vote: match action.metadata.as_ref().and_then(|m| m.first()) {
-                Some(0) => VoteValue::Up,
-                Some(1) => VoteValue::Down,
-                Some(2) => VoteValue::Remove,
+                Some(&0) => VoteValue::Up,
+                Some(&1) => VoteValue::Down,
+                Some(&2) => VoteValue::Remove,
                 _ => return Err(ProcessorError::InvalidVote),
             },
         }))
