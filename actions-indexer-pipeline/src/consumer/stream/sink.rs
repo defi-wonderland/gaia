@@ -1,5 +1,4 @@
 use anyhow::{anyhow, format_err, Context, Error};
-use chrono::DateTime;
 use futures03::StreamExt;
 use regex::Regex;
 use semver::Version;
@@ -16,7 +15,7 @@ use super::substreams_stream::{BlockResponse, SubstreamsStream};
 use prost::Message;
 use std::sync::Arc;
 use crate::errors::ConsumerError;
-use crate::consumer::ConsumeActions;
+use crate::consumer::{ConsumeActionsStream, StreamMessage};
 
 lazy_static! {
     static ref MODULE_NAME_REGEXP: Regex = Regex::new(r"^([a-zA-Z][a-zA-Z0-9_-]{0,63})$").unwrap();
@@ -24,7 +23,7 @@ lazy_static! {
 
 const REGISTRY_URL: &str = "https://spkg.io";
 
-pub struct Sink {
+pub struct SubstreamsStreamProvider {
     endpoint_url: String,
     package_file: String,
     module_name: String,
@@ -33,7 +32,7 @@ pub struct Sink {
     token: Option<String>,
 }
 
-impl Sink {
+impl SubstreamsStreamProvider {
     /// Creates a new Sink instance with the provided configuration
     pub fn new(
         endpoint_url: String,
@@ -58,75 +57,12 @@ impl Sink {
         }
     }
 
-    /// Runs the sink, processing the substream data
-    pub async fn run(&self) -> Result<(), Error> {
-        let package = read_package(&self.package_file, self.params.clone()).await?;
-        let block_range = read_block_range(&package, &self.module_name, self.block_range.clone())?;
-        let endpoint =
-            Arc::new(SubstreamsEndpoint::new(&self.endpoint_url, self.token.clone()).await?);
-
-        let cursor: Option<String> = self.load_persisted_cursor()?;
-
-        let mut stream = SubstreamsStream::new(
-            endpoint,
-            cursor,
-            package.modules,
-            self.module_name.clone(),
-            block_range.0,
-            block_range.1,
-        );
-
-        loop {
-            match stream.next().await {
-                None => {
-                    println!("Stream consumed");
-                    break;
-                }
-                Some(Ok(BlockResponse::New(data))) => {
-                    self.process_block_scoped_data(&data)?;
-                    self.persist_cursor(data.cursor)?;
-                }
-                Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                    self.process_block_undo_signal(&undo_signal)?;
-                    self.persist_cursor(undo_signal.last_valid_cursor)?;
-                }
-                Some(Err(err)) => {
-                    println!();
-                    println!("Stream terminated with error");
-                    println!("{:?}", err);
-                    return Err(err);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<(), Error> {
+    pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<Vec<ActionRaw>, Error> {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
-    
-        // You can decode the actual Any type received using this code:
-        //
-        //     let value = GeneratedStructName::decode(output.value.as_slice())?;
-        //
-        // Where GeneratedStructName is the Rust code generated for the Protobuf representing
-        // your type, so you will need generate it using `substreams protogen` and import it from the
-        // `src/pb` folder.
+        let actions = Actions::decode(output.value.as_slice()).map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
+        let raw_actions = actions.actions.iter().map(|action| ActionRaw::from(action)).collect::<Vec<ActionRaw>>();
         
-        let clock = data.clock.as_ref().unwrap();
-        let timestamp = clock.timestamp.as_ref().unwrap();
-        let date = DateTime::from_timestamp(timestamp.seconds, timestamp.nanos as u32)
-            .expect("received timestamp should always be valid");
-    
-        println!(
-            "Block #{} - Payload {} ({} bytes) - Drift {}s",
-            clock.number,
-            output.type_url.replace("type.googleapis.com/", ""),
-            output.value.len(), 
-            date.signed_duration_since(chrono::offset::Utc::now()).num_seconds() * -1, 
-        );
-    
-        Ok(())
+        Ok(raw_actions)
     }
     
     pub fn process_block_undo_signal(&self, _undo_signal: &BlockUndoSignal) -> Result<(), anyhow::Error> {
@@ -163,8 +99,8 @@ impl Sink {
 }
 
 #[async_trait::async_trait]
-impl ConsumeActions for Sink {
-    async fn stream_events(&self) -> Result<SubstreamsStream, ConsumerError> {
+impl ConsumeActionsStream for SubstreamsStreamProvider {
+    async fn stream_events(&self, sender: tokio::sync::mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError> {
         let package = read_package(&self.package_file, self.params.clone()).await.map_err(|e| ConsumerError::ReadingPackage(e.to_string()))?;
         let block_range = read_block_range(&package, &self.module_name, self.block_range.clone()).map_err(|e| ConsumerError::ReadingBlockRange(e.to_string()))?;
 
@@ -173,21 +109,39 @@ impl ConsumeActions for Sink {
 
         let cursor: Option<String> = self.load_persisted_cursor().map_err(|e| ConsumerError::LoadingCursor(e.to_string()))?;
 
-        Ok(SubstreamsStream::new(
+        let mut stream = SubstreamsStream::new(
             endpoint,
             cursor,
             package.modules,
             self.module_name.clone(),
             block_range.0,
             block_range.1
-        ))
-    }
+        );
 
-    async fn decode_block_scoped_data(&self, block_data: &BlockScopedData) -> Result<Vec<ActionRaw>, ConsumerError> {
-        let output = block_data.output.as_ref().unwrap().map_output.as_ref().unwrap();
-        let actions = Actions::decode(output.value.as_slice()).map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
-        let raw_actions = actions.actions.iter().map(|action| ActionRaw::from(action)).collect::<Vec<ActionRaw>>();
-        Ok(raw_actions)
+        loop {
+            match stream.next().await {
+                None => {
+                    sender.send(StreamMessage::StreamEnd).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                    break;
+                }
+                Some(Ok(BlockResponse::New(data))) => {
+                    let actions = self.process_block_scoped_data(&data).map_err(|e| ConsumerError::ProcessingBlockScopedData(e.to_string()))?;
+                    sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                }
+                Some(Ok(BlockResponse::Undo(undo_signal))) => {
+                    sender.send(StreamMessage::UndoSignal(undo_signal)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                }
+                Some(Err(err)) => {
+                    println!();
+                    println!("Stream terminated with error");
+                    println!("{:?}", err);
+                    sender.send(StreamMessage::Error(ConsumerError::StreamingError(err.to_string()))).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

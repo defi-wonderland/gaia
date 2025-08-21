@@ -9,21 +9,82 @@ pub mod stream;
 
 use actions_indexer_shared::types::ActionRaw;
 use async_trait::async_trait;
-use stream::pb::sf::substreams::rpc::v2::BlockScopedData;
-use stream::substreams_stream::SubstreamsStream;
+use stream::pb::sf::substreams::rpc::v2::BlockUndoSignal;
+use tokio::sync::mpsc;
+
+/// Message types that can be sent through the streaming channel.
+///
+/// Represents different types of events and data that flow through the consumer pipeline,
+/// enabling communication between the stream provider and the orchestrator.
+#[derive(Debug)]
+pub enum StreamMessage {
+    BlockData(Vec<ActionRaw>),
+    UndoSignal(BlockUndoSignal),
+    Error(ConsumerError),
+    StreamEnd,
+}
+
+/// Consumer component responsible for orchestrating blockchain action streaming.
+///
+/// Acts as a coordinator between stream providers and the processing pipeline,
+/// managing the flow of blockchain action data through channels. Provides a
+/// clean abstraction over different streaming implementations.
+pub struct ActionsConsumer {
+    stream_provider: Box<dyn ConsumeActionsStream>,
+}
+
+impl ActionsConsumer {
+    /// Creates a new `ActionsConsumer` with the specified stream provider and channel sender.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_provider` - A boxed trait object that implements `ConsumeActionsStream`
+    /// * `sender` - Channel sender for communicating with the orchestrator
+    ///
+    /// # Returns
+    ///
+    /// A new `ActionsConsumer` instance ready to start streaming.
+    pub fn new(stream_provider: Box<dyn ConsumeActionsStream>) -> Self {
+        Self { stream_provider }
+    }
+
+    /// Starts the consumer and begins streaming blockchain action events.
+    ///
+    /// This method delegates to the underlying stream provider to initiate the
+    /// streaming process. It will continue until the stream ends or an error occurs.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or a `ConsumerError` if streaming fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ConsumerError` if:
+    /// - The stream provider fails to initialize or connect
+    /// - Network connectivity issues occur during streaming
+    /// - Data parsing or validation errors happen
+    pub async fn run(&self, sender: mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError> {
+        self.stream_provider.stream_events(sender).await?;
+        Ok(())
+    }
+}
 
 /// Trait for consuming blockchain action events from data sources.
 ///
 /// Provides a unified interface for different data sources (substreams, RPC, etc.).
 #[async_trait]
-pub trait ConsumeActions {
-    /// Creates a stream for consuming blockchain action events.
+pub trait ConsumeActionsStream: Send + Sync {
+    /// Streams blockchain action events through a channel to decouple the consumer from orchestrator.
     ///
-    /// Returns a configured `SubstreamsStream` or an error if connection fails.
-    async fn stream_events(&self) -> Result<SubstreamsStream, ConsumerError>;
-
-    /// Decodes the block scoped data into a vector of `ActionRaw`s.
+    /// This method runs the streaming loop and sends messages through the provided channel.
+    /// It handles block data, undo signals, errors, and stream end notifications.
     ///
-    /// Returns a vector of `ActionRaw`s or an error if the data cannot be decoded.
-    async fn decode_block_scoped_data(&self, block_data: &BlockScopedData) -> Result<Vec<ActionRaw>, ConsumerError>;
+    /// # Arguments
+    ///
+    /// * `sender` - Channel sender for streaming messages to the orchestrator
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or a `ConsumerError` if streaming fails.
+    async fn stream_events(&self, sender: mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError>;
 }

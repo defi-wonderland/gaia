@@ -6,10 +6,8 @@ use thiserror::Error;
 ///
 /// This enum consolidates various error conditions specific to the consumption
 /// process, such as placeholder errors for unimplemented functionality.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum ConsumerError {
-    #[error("Placeholder error - implementation pending")]
-    Placeholder,
     #[error("Error reading package: {0}")]
     ReadingPackage(String),
     #[error("Error reading block range: {0}")]
@@ -24,4 +22,10 @@ pub enum ConsumerError {
     DecodingActions(String),
     #[error("Error processing block undo signal: {0}")] 
     ProcessingBlockUndoSignal(String),
+    #[error("Error sending message through channel: {0}")]
+    ChannelSend(String),
+    #[error("Streaming error: {0}")]
+    StreamingError(String),
+    #[error("Error processing block scoped data: {0}")]
+    ProcessingBlockScopedData(String),
 }
