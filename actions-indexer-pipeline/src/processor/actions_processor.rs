@@ -68,7 +68,7 @@ mod tests {
 
     use crate::errors::ProcessorError;
     use crate::processor::{ActionsProcessor, HandleAction, ProcessActions};
-    use actions_indexer_shared::types::{Action, ActionRaw, Vote, VoteAction};
+    use actions_indexer_shared::types::{Action, ActionRaw, Vote, VoteValue};
     use alloy::hex::FromHex;
     use alloy::primitives::{Address, Bytes, TxHash};
     use uuid::uuid;
@@ -77,12 +77,12 @@ mod tests {
 
     impl HandleAction for MockHandler {
         fn handle(&self, action: &ActionRaw) -> Result<Action, ProcessorError> {
-            Ok(Action::Vote(VoteAction {
+            Ok(Action::Vote(Vote {
                 raw: action.clone().into(),
                 vote: match action.metadata.as_ref().unwrap()[0] {
-                    0 => Vote::Up,
-                    1 => Vote::Down,
-                    2 => Vote::Remove,
+                    0 => VoteValue::Up,
+                    1 => VoteValue::Down,
+                    2 => VoteValue::Remove,
                     _ => return Err(ProcessorError::InvalidVote),
                 },
             }))
@@ -110,9 +110,9 @@ mod tests {
     fn assert_is_vote_action(action: &Action, event: &ActionRaw, expected_vote: Vote) {
         assert_eq!(
             action,
-            &Action::Vote(VoteAction {
+            &Action::Vote(Vote {
                 raw: event.clone().into(),
-                vote: expected_vote,
+                vote: expected_vote.vote,
             })
         );
     }
@@ -130,7 +130,10 @@ mod tests {
         let result = processor.process(&[action_event.clone()]);
         assert!(result.len() == 1);
         let action = result[0].clone();
-        assert_is_vote_action(&action, &action_event, Vote::Up);
+        assert_is_vote_action(&action, &action_event, Vote {
+            raw: action_event.clone().into(),
+            vote: VoteValue::Up,
+        });
     }
 
     #[test]
@@ -140,7 +143,10 @@ mod tests {
         let result = processor.process(&[action_event.clone()]);
         assert!(result.len() == 1);
         let action = result[0].clone();
-        assert_is_vote_action(&action, &action_event, Vote::Down);
+        assert_is_vote_action(&action, &action_event, Vote {
+            raw: action_event.clone().into(),
+            vote: VoteValue::Down,
+        });
     }
 
     #[test]
@@ -150,7 +156,10 @@ mod tests {
         let result = processor.process(&[action_event.clone()]);
         assert!(result.len() == 1);
         let action = result[0].clone();
-        assert_is_vote_action(&action, &action_event, Vote::Remove);
+        assert_is_vote_action(&action, &action_event, Vote {
+            raw: action_event.clone().into(),
+            vote: VoteValue::Remove,
+        });
     }
 
     #[test]
@@ -159,8 +168,14 @@ mod tests {
         let action_events = vec![make_action_event(0), make_action_event(1)];
         let result = processor.process(&action_events);
         assert!(result.len() == 2);
-        assert_is_vote_action(&result[0], &action_events[0], Vote::Up);
-        assert_is_vote_action(&result[1], &action_events[1], Vote::Down);
+        assert_is_vote_action(&result[0], &action_events[0], Vote {
+            raw: action_events[0].clone().into(),
+            vote: VoteValue::Up,
+        });
+        assert_is_vote_action(&result[1], &action_events[1], Vote {
+            raw: action_events[1].clone().into(),
+            vote: VoteValue::Down,
+        });
     }
 
     #[test]
