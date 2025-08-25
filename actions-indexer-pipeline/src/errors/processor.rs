@@ -8,6 +8,6 @@ use thiserror::Error;
 /// of actions, such as placeholder errors for unimplemented functionality.
 #[derive(Debug, Error)]
 pub enum ProcessorError {
-    #[error("Placeholder error - implementation pending")]
-    Placeholder,
+    #[error("Invalid vote")]
+    InvalidVote,
 }

@@ -3,9 +3,10 @@
 //! It integrates the consumer, processor, and loader components to manage the
 //! flow of action events from ingestion to persistence.
 use crate::errors::OrchestratorError;
-use crate::consumer::ConsumeActions;
-use crate::processor::ProcessActions;
+use crate::consumer::{ActionsConsumer, StreamMessage};
+use crate::processor::ActionsProcessor;
 use crate::loader::ActionsLoader;
+use tokio::sync::mpsc;
 
 /// `Orchestrator` is responsible for coordinating the consumption, processing,
 /// and loading of actions.
@@ -13,8 +14,8 @@ use crate::loader::ActionsLoader;
 /// It holds references to the `ConsumeActions`, `ProcessActions`, and
 /// `ActionsLoader` traits, enabling a flexible and extensible pipeline.
 pub struct Orchestrator {
-    pub actions_consumer: Box<dyn ConsumeActions>,
-    pub actions_processor: Box<dyn ProcessActions>,
+    pub actions_consumer: Box<ActionsConsumer>,
+    pub actions_processor: Box<ActionsProcessor>,
     pub actions_loader: Box<ActionsLoader>,
 }
 
@@ -23,16 +24,16 @@ impl Orchestrator {
     ///
     /// # Arguments
     ///
-    /// * `actions_consumer` - A boxed trait object that implements `ConsumeActions`
-    /// * `actions_processor` - A boxed trait object that implements `ProcessActions`
+    /// * `actions_consumer` - A boxed `ActionsConsumer` instance
+    /// * `actions_processor` - A boxed `ActionsProcessor` instance
     /// * `actions_loader` - A boxed `ActionsLoader` instance
     ///
     /// # Returns
     ///
     /// A new `Orchestrator` instance.
     pub fn new(
-        actions_consumer: Box<dyn ConsumeActions>,
-        actions_processor: Box<dyn ProcessActions>,
+        actions_consumer: Box<ActionsConsumer>,
+        actions_processor: Box<ActionsProcessor>,
         actions_loader: Box<ActionsLoader>,
     ) -> Self {
         Self {
@@ -51,8 +52,33 @@ impl Orchestrator {
     ///
     /// A `Result` indicating success or an `OrchestratorError` if an error occurs
     /// during the orchestration process.
-    pub async fn run(&self) -> Result<(), OrchestratorError> {
-        // TODO: Implement
+    pub async fn run(self) -> Result<(), OrchestratorError> {
+        let (tx, mut rx) = mpsc::channel(1000); 
+        
+        let consumer_tx = tx.clone();
+        let consumer = self.actions_consumer;
+        tokio::spawn(async move {
+            if let Err(e) = consumer.run(consumer_tx).await {
+                eprintln!("Consumer error: {:?}", e);
+            }
+        });
+        
+        while let Some(message) = rx.recv().await {
+            match message {
+                StreamMessage::BlockData(block_data) => {
+                    println!("BlockData: {:?}", block_data);
+                }
+                StreamMessage::UndoSignal(undo_signal) => {
+                    println!("UndoSignal: {:?}", undo_signal);
+                }
+                StreamMessage::Error(error) => {
+                    println!("Error: {:?}", error);
+                }
+                StreamMessage::StreamEnd => {
+                    println!("StreamEnd");
+                }
+            }   
+        }
         Ok(())
     }
 }

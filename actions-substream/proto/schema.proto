@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "sf/ethereum/type/v2/type.proto";
+
+package actions.v1;
+
+// Actions message representing processed action events
+message Actions {
+    repeated Action actions = 1;
+}
+
+// Individual action message with all required fields
+message Action {
+    uint64 action_type = 1;
+    uint64 action_version = 2;
+    string sender = 3;               // UserAddress (hex-encoded address)
+    string entity = 4;               // EntityId (UUID string)
+    optional string group_id = 5;    // Optional GroupId (UUID string)
+    string space_pov = 6;            // SpaceAddress (hex-encoded address)
+    optional bytes metadata = 7;     // Optional metadata bytes
+    uint64 block_number = 8;         // BlockNumber
+    uint64 block_timestamp = 9;      // BlockTimestamp
+    string tx_hash = 10;             // TxHash (hex-encoded hash)
+}

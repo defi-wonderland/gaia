@@ -83,7 +83,7 @@ mod tests {
                     0 => Vote::Up,
                     1 => Vote::Down,
                     2 => Vote::Remove,
-                    _ => return Err(ProcessorError::Placeholder),
+                    _ => return Err(ProcessorError::InvalidVote),
                 },
             }))
         }

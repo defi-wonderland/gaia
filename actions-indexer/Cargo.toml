@@ -16,3 +16,4 @@ sqlx = { version = "0.8", features = [
 ] }
 thiserror = "2.0.12"
 actions-indexer-pipeline = { path = "../actions-indexer-pipeline" }
+actions-indexer-shared = { path = "../actions-indexer-shared" }
