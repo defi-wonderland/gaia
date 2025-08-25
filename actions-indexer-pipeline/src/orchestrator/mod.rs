@@ -72,6 +72,9 @@ impl Orchestrator {
         while let Some(message) = rx.recv().await {
             match message {
                 StreamMessage::BlockData(block_data) => {
+                    let now = chrono::Utc::now();
+                    println!("{} - Begin processing block", now.to_rfc3339());
+                    
                     let actions = processor.process(&block_data);
                     
                     let mut votes: Vec<Vote> = Vec::new();
@@ -93,7 +96,6 @@ impl Orchestrator {
                     if let Err(e) = loader.persist_changeset(&changeset).await {
                         eprintln!("Failed to persist changeset: {:?}", e);
                     }
-                    println!("Block processed - Saved {} new actions", actions.len());
                 }
                 StreamMessage::UndoSignal(undo_signal) => {
                     println!("UndoSignal: {:?}", undo_signal);
