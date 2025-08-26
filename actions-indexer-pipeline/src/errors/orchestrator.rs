@@ -2,6 +2,7 @@
 //! Defines specific errors that can occur during the orchestration process.
 use thiserror::Error;
 use crate::errors::consumer::ConsumerError;
+use actions_indexer_repository::errors::ActionsRepositoryError;
 
 /// Represents errors that can occur within the action orchestrator.
 ///
@@ -11,4 +12,6 @@ use crate::errors::consumer::ConsumerError;
 pub enum OrchestratorError {
     #[error("Consumer error: {0}")]
     Consumer(#[from] ConsumerError),
+    #[error("Actions repository error: {0}")]
+    ActionsRepository(#[from] ActionsRepositoryError),
 }
