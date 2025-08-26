@@ -1,4 +1,4 @@
-use super::action_vote::VoteAction;
+use super::action_vote::Vote;
 
 /// Represents a processed action with its associated data.
 ///
@@ -7,5 +7,5 @@ use super::action_vote::VoteAction;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Represents a vote action, containing details about the vote.
-    Vote(VoteAction),
+    Vote(Vote),
 }

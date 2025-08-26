@@ -28,4 +28,12 @@ pub enum ConsumerError {
     StreamingError(String),
     #[error("Error processing block scoped data: {0}")]
     ProcessingBlockScopedData(String),
+    #[error("Invalid address: {0}")]
+    InvalidAddress(String),
+    #[error("Invalid UUID: {0}")]
+    InvalidUuid(String),
+    #[error("Invalid transaction hash: {0}")]
+    InvalidTxHash(String),
+    #[error("Missing field: {0}")]
+    MissingField(String),
 }

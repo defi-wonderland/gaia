@@ -16,4 +16,7 @@ pub enum ActionsRepositoryError {
 
     #[error("Invalid timestamp: {0}")]
     InvalidTimestamp(u64),
+
+    #[error("Invalid vote type: {0}")]
+    InvalidVoteType(i16),
 }

@@ -6,7 +6,7 @@
 //! Run with: `cargo test --test postgres_integration`
 
 use actions_indexer_repository::{ActionsRepository, PostgresActionsRepository};
-use actions_indexer_shared::types::{Action, ActionRaw, VoteAction, Vote, UserVote, VotesCount, VoteCriteria};
+use actions_indexer_shared::types::{Action, ActionRaw, Vote, UserVote, VotesCount, VoteCriteria, VoteValue};
 use alloy::primitives::{Address, TxHash};
 use alloy::hex::FromHex;
 use uuid::Uuid;
@@ -34,7 +34,7 @@ fn make_user_vote() -> UserVote {
         user_id: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
-        vote_type: 1,
+        vote_type: VoteValue::Up,
         voted_at: 1755182913,
     }
 }
@@ -59,9 +59,9 @@ async fn test_insert_raw_action(pool: sqlx::PgPool) {
 
     let raw_action = make_raw_action();
 
-    let action = Action::Vote(VoteAction {
+    let action = Action::Vote(Vote {
         raw: raw_action.clone(),
-        vote: Vote::Up,
+        vote: VoteValue::Up,
     });
 
     repository.insert_actions(&[action]).await.unwrap();
@@ -78,17 +78,17 @@ async fn test_insert_multiple_raw_actions(pool: sqlx::PgPool) {
     let repository = PostgresActionsRepository::new(pool.clone()).await.unwrap();
     let raw_action = make_raw_action();
     let actions = vec![
-        Action::Vote(VoteAction {
+        Action::Vote(Vote {
             raw: raw_action.clone(),
-            vote: Vote::Up,
+            vote: VoteValue::Up,
         }),
-        Action::Vote(VoteAction {
+        Action::Vote(Vote {
             raw: raw_action.clone(),
-            vote: Vote::Down,
+            vote: VoteValue::Down,
         }),
-        Action::Vote(VoteAction {
+        Action::Vote(Vote {
             raw: raw_action.clone(),
-            vote: Vote::Remove,
+            vote: VoteValue::Remove,
         }),
     ];
 
@@ -110,6 +110,29 @@ async fn test_insert_empty_actions(pool: sqlx::PgPool) {
         .fetch_all(&pool).await.unwrap();
 
     assert!(actions_in_db.is_empty());
+}
+
+#[sqlx::test(migrations = "src/postgres/migrations")]
+async fn test_insert_raw_action_with_metadata(pool: sqlx::PgPool) {
+    let repository = PostgresActionsRepository::new(pool.clone()).await.unwrap();
+
+    let test_metadata = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+    let mut raw_action = make_raw_action();
+    raw_action.metadata = Some(alloy::primitives::Bytes::from(test_metadata.clone()));
+
+    let action = Action::Vote(Vote {
+        raw: raw_action.clone(),
+        vote: VoteValue::Up,
+    });
+
+    repository.insert_actions(&[action]).await.unwrap();
+
+    let actions = sqlx::query!("SELECT metadata FROM raw_actions WHERE tx_hash = $1", raw_action.tx_hash.to_string())
+        .fetch_all(&pool).await.unwrap();
+
+    assert_eq!(actions.len(), 1);
+    assert!(actions[0].metadata.is_some());
+    assert_eq!(actions[0].metadata.as_ref().unwrap(), &test_metadata);
 }
 
 // ============================================================================
@@ -137,12 +160,12 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     assert_eq!(votes_in_db.user_id, format!("0x{}", hex::encode(user_vote.user_id.as_slice())));
     assert_eq!(votes_in_db.entity_id, user_vote.entity_id);
     assert_eq!(votes_in_db.space_id, format!("0x{}", hex::encode(user_vote.space_id.as_slice())));
-    assert_eq!(votes_in_db.vote_type as u8, user_vote.vote_type);
+    assert_eq!(votes_in_db.vote_type, 0);
     assert_eq!(votes_in_db.voted_at.unix_timestamp() as u64, user_vote.voted_at);
 
     // Test update
     let updated_user_vote = UserVote {
-        vote_type: 2,
+        vote_type: VoteValue::Down,
         voted_at: 1755182914,
         ..user_vote.clone()
     };
@@ -159,7 +182,7 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     .await
     .unwrap();
 
-    assert_eq!(updated_votes_in_db.vote_type as u8, updated_user_vote.vote_type);
+    assert_eq!(updated_votes_in_db.vote_type, 1);
     assert_eq!(updated_votes_in_db.voted_at.unix_timestamp() as u64, updated_user_vote.voted_at);
 }
 
@@ -304,14 +327,14 @@ async fn test_get_user_votes(pool: sqlx::PgPool) {
         user_id: Address::from_hex("0x1234567890123456789012345678901234567890").unwrap(),
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567891").unwrap(),
-        vote_type: 1,
+        vote_type: VoteValue::Down,
         voted_at: 1755182913,
     };
     let user_vote3 = UserVote {
         user_id: Address::from_hex("0x1234567890123456789012345678901234567890").unwrap(),
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567892").unwrap(),
-        vote_type: 2,
+        vote_type: VoteValue::Remove,
         voted_at: 1755182914,
     };
 
@@ -343,7 +366,7 @@ async fn test_get_user_votes_partial_matches(pool: sqlx::PgPool) {
         user_id: Address::from_hex("0x1234567890123456789012345678901234567890").unwrap(),
         entity_id: Uuid::new_v4(),
         space_id: Address::from_hex("0x1234567890123456789012345678901234567891").unwrap(),
-        vote_type: 1,
+        vote_type: VoteValue::Down,
         voted_at: 1755182913,
     };
 

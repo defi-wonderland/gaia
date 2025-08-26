@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// It utilizes an `ActionsRepository` to interact with the underlying data store,
 /// ensuring that processed action data is correctly stored.
 pub struct ActionsLoader {
-    actions_repository: Arc<dyn ActionsRepository>
+    pub actions_repository: Arc<dyn ActionsRepository>
 }
 
 impl ActionsLoader {

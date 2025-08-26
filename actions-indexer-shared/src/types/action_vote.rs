@@ -1,8 +1,9 @@
 use crate::types::ActionRaw;
+use serde::{Deserialize, Serialize};
 
 /// Represents the type of vote cast by a user.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Vote {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VoteValue {
     /// Indicates an upvote or positive endorsement.
     Up,
     /// Indicates a downvote or negative endorsement.
@@ -15,8 +16,8 @@ pub enum Vote {
 ///
 /// This struct combines the raw action data with the specific vote type,
 /// providing a structured representation of a user's vote.
-#[derive(Clone, Debug, PartialEq)]
-pub struct VoteAction {
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+pub struct Vote {
     pub raw: ActionRaw,
-    pub vote: Vote,
+    pub vote: VoteValue,
 }

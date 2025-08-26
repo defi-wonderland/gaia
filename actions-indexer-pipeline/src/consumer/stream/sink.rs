@@ -58,10 +58,20 @@ impl SubstreamsStreamProvider {
     }
 
     pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<Vec<ActionRaw>, Error> {
-        let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
-        let actions = Actions::decode(output.value.as_slice()).map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
-        let raw_actions = actions.actions.iter().map(|action| ActionRaw::from(action)).collect::<Vec<ActionRaw>>();
-        
+        let output = data.output
+            .as_ref()
+            .ok_or_else(|| ConsumerError::MissingField("output".to_string()))?
+            .map_output
+            .as_ref()
+            .ok_or_else(|| ConsumerError::MissingField("map_output".to_string()))?;
+        let actions = Actions::decode(output.value.as_slice())
+            .map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
+        let raw_actions = actions
+            .actions
+            .iter()
+            .map(|action| ActionRaw::try_from(action))
+            .collect::<Result<Vec<ActionRaw>, ConsumerError>>()?;
+
         Ok(raw_actions)
     }
     
@@ -335,23 +345,30 @@ pub struct Param {
     pub expression: String,
 }
 
-impl From<&Action> for ActionRaw {
-    fn from(action: &Action) -> Self {
-        ActionRaw {
-            sender: action.sender.parse().unwrap(),
+impl TryFrom<&Action> for ActionRaw {
+    type Error = ConsumerError;
+
+    fn try_from(action: &Action) -> Result<Self, Self::Error> {
+        Ok(ActionRaw {
+            sender: action.sender.parse()
+                .map_err(|e| ConsumerError::InvalidAddress(format!("sender: {}", e)))?,
             action_type: action.action_type,
             action_version: action.action_version,
-            space_pov: action.space_pov.parse().unwrap(),
-            entity: action.entity.parse().unwrap(),
+            space_pov: action.space_pov.parse()
+                .map_err(|e| ConsumerError::InvalidAddress(format!("space_pov: {}", e)))?,
+            entity: action.entity.parse()
+                .map_err(|e| ConsumerError::InvalidUuid(format!("entity: {}", e)))?,
             group_id: if action.group_id.is_some() {
-                Some(action.group_id.as_ref().unwrap().parse().unwrap())
+                Some(action.group_id.as_ref().unwrap().parse()
+                    .map_err(|e| ConsumerError::InvalidUuid(format!("group_id: {}", e)))?)
             } else {
                 None
             },
             metadata: action.metadata.as_ref().map(|metadata| metadata.to_vec().into()),
             block_number: action.block_number.into(),
             block_timestamp: action.block_timestamp.into(),
-            tx_hash: action.tx_hash.parse().unwrap(),
-        }
+            tx_hash: action.tx_hash.parse()
+                .map_err(|e| ConsumerError::InvalidTxHash(format!("tx_hash: {}", e)))?,
+        })
     }
 }
