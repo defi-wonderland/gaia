@@ -195,4 +195,15 @@ pub trait ActionsRepository: Send + Sync {
         &self,
         vote_criteria: &[VoteCountCriteria],
     ) -> Result<Vec<VotesCount>, ActionsRepositoryError>;
+
+    /// Checks if the tables are created in the database.
+    ///
+    /// This method checks if the tables are created in the database.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - If the tables are created
+    /// * `Err(ActionsRepositoryError)` - If the query fails due to database errors
+    ///   or connection issues
+    async fn check_tables_created(&self) -> Result<bool, ActionsRepositoryError>;
 }
