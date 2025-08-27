@@ -383,4 +383,30 @@ impl ActionsRepository for PostgresActionsRepository {
 
         Ok(result_counts)
     }
+
+    /// Checks if the tables are created in the database.
+    ///
+    /// This method checks if the tables are created in the database.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - If the tables are created
+    async fn check_tables_created(&self) -> Result<bool, ActionsRepositoryError> {
+        let tables = vec!["raw_actions", "user_votes", "votes_count"];
+        for table in tables {
+            let table_exists: bool = sqlx::query_scalar!(
+                r#"
+                SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)
+                "#,
+                table
+            )
+            .fetch_one(&self.pool)
+            .await?
+            .unwrap_or(false);
+            if !table_exists {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
