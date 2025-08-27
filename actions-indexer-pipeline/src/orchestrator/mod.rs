@@ -83,6 +83,15 @@ impl Orchestrator {
                             Action::Vote(vote) => votes.push(vote),
                         }
                     }
+
+                    // Wait until the tables are created
+                    loop {
+                        if loader.actions_repository.check_tables_created().await? {
+                            break;
+                        }
+                        println!("Waiting for tables to be created...");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
                     
                     let user_votes = get_latest_user_votes(&votes);
                     let votes_count = update_vote_counts(&user_votes, loader.actions_repository.as_ref()).await?;
