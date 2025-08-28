@@ -24,13 +24,14 @@ fn map_actions(blk: Block) -> Result<Actions, substreams::errors::Error> {
                             action_type: action.action_type,
                             action_version: action.action_version,
                             sender: format!("0x{}", hex::encode(&transaction.from)),
-                            entity: action.entity,
+                            object_id: action.object_id,
                             group_id: action.group_id,
                             space_pov: action.space_pov,
                             metadata: action.metadata,
                             block_number,
                             block_timestamp,
                             tx_hash: tx_hash.clone(),
+                            object_type: action.object_type,
                         };
                         actions.actions.push(action);
                     }
@@ -54,9 +55,10 @@ fn is_address_in_contracts(address: &Vec<u8>) -> bool {
 struct EventData {
     action_type: u64,
     action_version: u64,
+    object_type: u64,
     space_pov: String,
     group_id: Option<String>,
-    entity: String,
+    object_id: String,
     metadata: Option<Vec<u8>>,
 }
 
@@ -65,32 +67,35 @@ struct EventData {
 fn decode_action_log(log: &Log) -> Result<Option<EventData>, substreams::errors::Error> {
     let data = &log.data;
     if data.len() < 128 {
-        // Minimum: word0(32) + word1(32) + offset(32) + length(32)
         return Ok(None);
     }
 
-    // Decode word0: action version (255-240) | event type (239-224) | reserved (223-160) | space POV (160-0)
     let word0 = &data[0..32];
     let action_version = u16::from_be_bytes([word0[0], word0[1]]) as u64;
     let action_type = u16::from_be_bytes([word0[2], word0[3]]) as u64;
-    // Skip reserved bytes [4..12]
-    let space_pov = format!("0x{}", hex::encode(&word0[12..32])); // Last 20 bytes for address
-
-    // Decode word1: group id (255-128) | entity id (128-0)
-    let word1 = &data[32..64];
-    let group_id_bytes = &word1[0..16]; // First 16 bytes (128 bits)
-    let entity_id_bytes = &word1[16..32]; // Last 16 bytes (128 bits)
-
-    // Convert 16-byte arrays to UUID strings
-    let entity = format!(
+    let object_type = (word0[15] & 0x0F) as u64;
+    let space_uuid_bytes = &word0[16..32];
+    
+    let space_pov = format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        entity_id_bytes[0], entity_id_bytes[1], entity_id_bytes[2], entity_id_bytes[3],
-        entity_id_bytes[4], entity_id_bytes[5], entity_id_bytes[6], entity_id_bytes[7],
-        entity_id_bytes[8], entity_id_bytes[9], entity_id_bytes[10], entity_id_bytes[11],
-        entity_id_bytes[12], entity_id_bytes[13], entity_id_bytes[14], entity_id_bytes[15]
+        space_uuid_bytes[0], space_uuid_bytes[1], space_uuid_bytes[2], space_uuid_bytes[3],
+        space_uuid_bytes[4], space_uuid_bytes[5], space_uuid_bytes[6], space_uuid_bytes[7],
+        space_uuid_bytes[8], space_uuid_bytes[9], space_uuid_bytes[10], space_uuid_bytes[11],
+        space_uuid_bytes[12], space_uuid_bytes[13], space_uuid_bytes[14], space_uuid_bytes[15]
     );
 
-    // Check if group_id is zero (optional field)
+    let word1 = &data[32..64];
+    let group_id_bytes = &word1[0..16];
+    let object_id_bytes = &word1[16..32];
+
+    let object_id = format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        object_id_bytes[0], object_id_bytes[1], object_id_bytes[2], object_id_bytes[3],
+        object_id_bytes[4], object_id_bytes[5], object_id_bytes[6], object_id_bytes[7],
+        object_id_bytes[8], object_id_bytes[9], object_id_bytes[10], object_id_bytes[11],
+        object_id_bytes[12], object_id_bytes[13], object_id_bytes[14], object_id_bytes[15]
+    );
+
     let group_id = if group_id_bytes.iter().all(|&x| x == 0) {
         None
     } else {
@@ -103,14 +108,24 @@ fn decode_action_log(log: &Log) -> Result<Option<EventData>, substreams::errors:
         ))
     };
 
-    let metadata = if data.len() < 160 {
+    let metadata = if data.len() < 128 {
         None
     } else {
-        let payload_length = u64::from_be_bytes([
-            data[152], data[153], data[154], data[155], data[156], data[157], data[158], data[159],
+        let payload_offset = u64::from_be_bytes([
+            data[120], data[121], data[122], data[123], data[124], data[125], data[126], data[127],
         ]) as usize;
-        if payload_length > 0 && data.len() >= 160 + payload_length {
-            Some(data[160..160 + payload_length].to_vec())
+        
+        if payload_offset + 32 <= data.len() {
+            let payload_length = u64::from_be_bytes([
+                data[payload_offset + 24], data[payload_offset + 25], data[payload_offset + 26], data[payload_offset + 27],
+                data[payload_offset + 28], data[payload_offset + 29], data[payload_offset + 30], data[payload_offset + 31],
+            ]) as usize;
+            
+            if payload_length > 0 && data.len() >= payload_offset + 32 + payload_length {
+                Some(data[payload_offset + 32..payload_offset + 32 + payload_length].to_vec())
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -119,7 +134,8 @@ fn decode_action_log(log: &Log) -> Result<Option<EventData>, substreams::errors:
     Ok(Some(EventData {
         action_type,
         action_version,
-        entity,
+        object_type,
+        object_id,
         group_id,
         space_pov,
         metadata,
