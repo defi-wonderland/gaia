@@ -33,12 +33,12 @@ The [Actions Interface](https://github.com/defi-wonderland/geo-actions/blob/63bb
 
 | Field | Description | Type |
 |-------|-------------|------|
-| `kind` | Type of event being performed | `uint16` |
+| `kind` | Type of action being performed | `uint16` |
 | `version` | Version identifier for the action schema | `uint16` |
 | `objectType` | Identifier for the target object type | `uint8` |
 | `spacePOV` | Unique identifier for the space context | `bytes16` |
 | `groupId` | Group identifier for organizing actions | `bytes16` |
-| `objectId` | Unique identifier for the target entity | `bytes16` |
+| `objectId` | Unique identifier for the target object | `bytes16` |
 | `payload` | Action-specific data payload | `bytes` |
 
 ### Event Type Mappings
