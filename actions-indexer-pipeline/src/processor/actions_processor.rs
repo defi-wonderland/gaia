@@ -92,7 +92,7 @@ mod tests {
     fn make_action_event(payload_byte: u8) -> ActionRaw {
         ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            action_type: 1,
+            action_type: 0,
             action_version: 1,
             space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
@@ -120,7 +120,7 @@ mod tests {
 
     fn mocked_processor() -> ActionsProcessor {
         let mut processor = ActionsProcessor::new();
-        processor.register_handler(1, 1, 0, Arc::new(MockHandler));
+        processor.register_handler(1, 0, 0, Arc::new(MockHandler));
         processor
     }
 

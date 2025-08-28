@@ -369,6 +369,7 @@ impl TryFrom<&Action> for ActionRaw {
             block_timestamp: action.block_timestamp.into(),
             tx_hash: action.tx_hash.parse()
                 .map_err(|e| ConsumerError::InvalidTxHash(format!("tx_hash: {}", e)))?,
+            object_type: 0,
         })
     }
 }

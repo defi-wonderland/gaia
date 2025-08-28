@@ -49,7 +49,7 @@ impl Dependencies {
 
         let actions_consumer = ActionsConsumer::new(Box::new(substreams_stream_provider));
         let mut actions_processor = ActionsProcessor::new();
-        actions_processor.register_handler(1, 1, 0, Arc::new(VoteHandler));
+        actions_processor.register_handler(1, 0, 0, Arc::new(VoteHandler));
         
         let actions_loader = ActionsLoader::new(Arc::new(PostgresActionsRepository::new(pool).await.map_err(|e| IndexingError::Repository(e))?));
 
