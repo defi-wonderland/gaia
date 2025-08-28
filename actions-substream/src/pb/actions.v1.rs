@@ -24,7 +24,7 @@ pub struct Action {
     /// Optional GroupId (UUID string)
     #[prost(string, optional, tag="5")]
     pub group_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// SpaceAddress (UUID string)
+    /// SpacePOV (UUID string)
     #[prost(string, tag="6")]
     pub space_pov: ::prost::alloc::string::String,
     /// Optional metadata bytes

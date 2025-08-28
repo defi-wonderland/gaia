@@ -17,7 +17,7 @@ message Action {
     string sender = 3;               // UserAddress (hex-encoded address)
     string object_id = 4;            // ObjectId (UUID string)
     optional string group_id = 5;    // Optional GroupId (UUID string)
-    string space_pov = 6;            // SpaceAddress (UUID string)
+    string space_pov = 6;            // SpacePOV (UUID string)
     optional bytes metadata = 7;     // Optional metadata bytes
     uint64 block_number = 8;         // BlockNumber
     uint64 block_timestamp = 9;      // BlockTimestamp
