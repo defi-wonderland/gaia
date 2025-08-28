@@ -141,3 +141,116 @@ fn decode_action_log(log: &Log) -> Result<Option<EventData>, substreams::errors:
         metadata,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pb::sf::ethereum::r#type::v2::Log;
+
+    pub fn log_with_data(data: Vec<u8>) -> Log {
+        Log {
+            data,
+            address: vec![0; 20],
+            topics: vec![],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    const TEST_CASES: &[&str] = &[
+        "00010000000000000000000000000000f8d9744df54645f1a90dcbd511c9d600
+         00000000000000000000000000000000a8f03660921b4f2ab3c6e3cb9542748d
+         00000000000000000000000049894dbfa9d78bbe4807da28efaca9d105e5244f
+         0000000000000000000000000000000000000000000000000000000000000080
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000000", // Upvote on entity
+        "00010000000000000000000000000001f8d9744df54645f1a90dcbd511c9d600
+         00000000000000000000000000000000a8f03660921b4f2ab3c6e3cb9542748d
+         00000000000000000000000049894dbfa9d78bbe4807da28efaca9d105e5244f
+         0000000000000000000000000000000000000000000000000000000000000080
+         0000000000000000000000000000000000000000000000000000000000000001
+         0000000000000000000000000000000000000000000000000000000000000000", // Upvote on relation
+        "00010000000000000000000000000000f8d9744df54645f1a90dcbd511c9d600
+         00000000000000000000000000000000a8f03660921b4f2ab3c6e3cb9542749a
+         00000000000000000000000049894dbfa9d78bbe4807da28efaca9d105e5244f
+         0000000000000000000000000000000000000000000000000000000000000080
+         0000000000000000000000000000000000000000000000000000000000000001
+         0100000000000000000000000000000000000000000000000000000000000000", // Downvote on entity
+         "00010000000000000000000000000001f8d9744df54645f1a90dcbd511c9d600
+         00000000000000000000000000000000a8f03660921b4f2ab3c6e3cb9542749a
+         00000000000000000000000049894dbfa9d78bbe4807da28efaca9d105e5244f
+         0000000000000000000000000000000000000000000000000000000000000080
+         0000000000000000000000000000000000000000000000000000000000000001
+         0200000000000000000000000000000000000000000000000000000000000000", // Remove on relation
+         
+    ];
+
+    #[test]
+    fn test_decode_action_log() {
+        let hex_string = TEST_CASES[0].chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let data = hex::decode(hex_string).unwrap();
+        let log = log_with_data(data);
+        let result = decode_action_log(&log);
+        assert!(result.is_ok());
+        let event_data = result.unwrap().unwrap();
+        assert_eq!(event_data.action_version, 1);
+        assert_eq!(event_data.action_type, 0);
+        assert_eq!(event_data.object_type, 0);
+        assert_eq!(event_data.space_pov, "f8d9744d-f546-45f1-a90d-cbd511c9d600");
+        assert_eq!(event_data.group_id, None);
+        assert_eq!(event_data.object_id, "a8f03660-921b-4f2a-b3c6-e3cb9542748d");
+        assert_eq!(event_data.metadata, Some(vec![0]));
+    }
+
+    #[test]
+    fn test_decode_action_log_relation() {
+        let hex_string = TEST_CASES[1].chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let data = hex::decode(hex_string).unwrap();
+        let log = log_with_data(data);
+        let result = decode_action_log(&log);
+        assert!(result.is_ok());
+        let event_data = result.unwrap().unwrap();
+        assert_eq!(event_data.action_version, 1);
+        assert_eq!(event_data.action_type, 0);
+        assert_eq!(event_data.object_type, 1);
+        assert_eq!(event_data.space_pov, "f8d9744d-f546-45f1-a90d-cbd511c9d600");
+        assert_eq!(event_data.group_id, None);
+        assert_eq!(event_data.object_id, "a8f03660-921b-4f2a-b3c6-e3cb9542748d");
+        assert_eq!(event_data.metadata, Some(vec![0]));
+    }
+
+    #[test]
+    fn test_decode_action_log_downvote() {
+        let hex_string = TEST_CASES[2].chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let data = hex::decode(hex_string).unwrap();
+        let log = log_with_data(data);
+        let result = decode_action_log(&log);
+        assert!(result.is_ok());
+        let event_data = result.unwrap().unwrap();
+        assert_eq!(event_data.action_version, 1);
+        assert_eq!(event_data.action_type, 0);
+        assert_eq!(event_data.object_type, 0);
+        assert_eq!(event_data.space_pov, "f8d9744d-f546-45f1-a90d-cbd511c9d600");
+        assert_eq!(event_data.group_id, None);
+        assert_eq!(event_data.object_id, "a8f03660-921b-4f2a-b3c6-e3cb9542749a");
+        assert_eq!(event_data.metadata, Some(vec![1]));
+    }
+
+    #[test]
+    fn test_decode_action_log_remove() {
+        let hex_string = TEST_CASES[3].chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let data = hex::decode(hex_string).unwrap();
+        let log = log_with_data(data);
+        let result = decode_action_log(&log);
+        assert!(result.is_ok());
+        let event_data = result.unwrap().unwrap();
+        assert_eq!(event_data.action_version, 1);
+        assert_eq!(event_data.action_type, 0);
+        assert_eq!(event_data.object_type, 1);
+        assert_eq!(event_data.space_pov, "f8d9744d-f546-45f1-a90d-cbd511c9d600");
+        assert_eq!(event_data.group_id, None);
+        assert_eq!(event_data.object_id, "a8f03660-921b-4f2a-b3c6-e3cb9542749a");
+        assert_eq!(event_data.metadata, Some(vec![2]));
+    }
+}
