@@ -12,6 +12,7 @@ on:
             - 'actions-indexer-pipeline/**'
             - 'actions-indexer-shared/**'
             - 'actions-indexer-repository/**'
+            - 'actions-substream/**'
             - '.github/workflows/actions-unit-tests.yml'
 
 permissions:
@@ -47,4 +48,5 @@ jobs:
             -p actions-indexer \
             -p actions-indexer-pipeline \
             -p actions-indexer-shared \
-            -p actions-indexer-repository
+            -p actions-indexer-repository \
+            -p actions-substream
