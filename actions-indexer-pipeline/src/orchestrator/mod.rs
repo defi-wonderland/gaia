@@ -256,16 +256,12 @@ mod tests {
         Address::from_hex("0x000000000000000000000000000000000000dEaD").unwrap()
     }
 
-    pub fn space_address() -> Address {
-        Address::from_hex("0x894a1a70311cd19a3ef33a38b18eab618394d6dd").unwrap()
-    }
-
     #[tokio::test]
     async fn test_calculate_votes_changes_upvote_downvote() {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -273,7 +269,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -288,7 +284,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -296,7 +292,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Remove,
             voted_at: 1713859200,
         };
@@ -311,7 +307,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -319,7 +315,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -334,7 +330,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -342,7 +338,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Remove,
             voted_at: 1713859200,
         };
@@ -367,11 +363,12 @@ mod tests {
             sender: dead_address(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: None,
-            space_pov: space_address(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             metadata: None,
             block_number: 1,
             block_timestamp: 1713859200,
             tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+            object_type: 0,
         };
 
         let vote = Vote {
@@ -385,7 +382,7 @@ mod tests {
         assert_eq!(user_votes.len(), 1);
         assert_eq!(user_votes[0].user_id, dead_address());
         assert_eq!(user_votes[0].entity_id, uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"));
-        assert_eq!(user_votes[0].space_id, space_address());
+        assert_eq!(user_votes[0].space_id, uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"));
         assert_eq!(user_votes[0].vote_type, VoteValue::Up);
         assert_eq!(user_votes[0].voted_at, 1713859200);
     }
@@ -408,11 +405,12 @@ mod tests {
             sender: dead_address(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: None,
-            space_pov: space_address(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             metadata: None,
             block_number: 1,
             block_timestamp: 1713859200,
             tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+            object_type: 0,
         };
 
         // First vote (older)
@@ -441,7 +439,7 @@ mod tests {
         assert_eq!(user_votes.len(), 1);
         assert_eq!(user_votes[0].user_id, dead_address());
         assert_eq!(user_votes[0].entity_id, uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"));
-        assert_eq!(user_votes[0].space_id, space_address());
+        assert_eq!(user_votes[0].space_id, uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"));
         assert_eq!(user_votes[0].vote_type, VoteValue::Down);
         assert_eq!(user_votes[0].voted_at, 1713859300);
     }
@@ -462,11 +460,12 @@ mod tests {
                 sender: user1,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -478,11 +477,12 @@ mod tests {
                 sender: user2,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };
@@ -520,11 +520,12 @@ mod tests {
                 sender: user,
                 entity: entity1,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -536,11 +537,12 @@ mod tests {
                 sender: user,
                 entity: entity2,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Remove,
         };
@@ -579,11 +581,12 @@ mod tests {
                 sender: user1,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -595,11 +598,12 @@ mod tests {
                 sender: user2,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };
@@ -611,11 +615,12 @@ mod tests {
                 sender: user3,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859400,
                 tx_hash: TxHash::from_hex("0x7649ec009e05499f9bd47274ef4e73a6f7b24126f79ead19c6e6648cd4e83af6").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Remove,
         };
@@ -643,8 +648,8 @@ mod tests {
         
         let user = dead_address();
         let entity_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
-        let space1 = space_address();
-        let space2 = Address::from_hex("0x1234567890123456789012345678901234567890").unwrap();
+        let space1 = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+        let space2 = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318a");
         
         let vote1 = Vote {
             raw: ActionRaw {
@@ -658,6 +663,7 @@ mod tests {
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -674,6 +680,7 @@ mod tests {
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };
