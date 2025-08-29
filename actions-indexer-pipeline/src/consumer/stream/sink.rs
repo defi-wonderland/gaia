@@ -135,7 +135,6 @@ impl ConsumeActionsStream for SubstreamsStreamProvider {
         loop {
             match stream.next().await {
                 None => {
-                    println!("Stream ended");
                     sender.send(StreamMessage::StreamEnd).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                     break;
                 }
@@ -149,7 +148,6 @@ impl ConsumeActionsStream for SubstreamsStreamProvider {
                     sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                    println!("Processing undo signal");
                     sender.send(StreamMessage::UndoSignal(undo_signal)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Err(err)) => {
