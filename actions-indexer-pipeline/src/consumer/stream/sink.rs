@@ -58,6 +58,10 @@ impl SubstreamsStreamProvider {
     }
 
     pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<Vec<ActionRaw>, Error> {
+        let now = chrono::Utc::now();
+        let block_number = data.clock.as_ref().unwrap().number;
+        println!("{} - Processing block {}", now.to_rfc3339(), block_number);
+
         let output = data.output
             .as_ref()
             .ok_or_else(|| ConsumerError::MissingField("output".to_string()))?
@@ -131,14 +135,21 @@ impl ConsumeActionsStream for SubstreamsStreamProvider {
         loop {
             match stream.next().await {
                 None => {
+                    println!("Stream ended");
                     sender.send(StreamMessage::StreamEnd).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                     break;
                 }
                 Some(Ok(BlockResponse::New(data))) => {
                     let actions = self.process_block_scoped_data(&data).map_err(|e| ConsumerError::ProcessingBlockScopedData(e.to_string()))?;
+                    if actions.len() == 0 {
+                        let now = chrono::Utc::now();
+                        println!("{} - No actions for block {}", now.to_rfc3339(), data.clock.as_ref().unwrap().number);
+                        continue;
+                    }
                     sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
+                    println!("Processing undo signal");
                     sender.send(StreamMessage::UndoSignal(undo_signal)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Err(err)) => {

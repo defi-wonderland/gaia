@@ -73,7 +73,7 @@ impl Orchestrator {
             match message {
                 StreamMessage::BlockData(block_data) => {
                     let now = chrono::Utc::now();
-                    println!("{} - Begin processing block", now.to_rfc3339());
+                    println!("{} - Processing {} actions", now.to_rfc3339(), block_data.len());
                     
                     let actions = processor.process(&block_data);
                     
