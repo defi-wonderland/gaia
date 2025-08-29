@@ -62,6 +62,15 @@ impl Orchestrator {
         let consumer = self.actions_consumer;
         let processor = self.actions_processor;
         let loader = self.actions_loader;
+
+        // Wait until the tables are created
+        loop {
+            if loader.actions_repository.check_tables_created().await? {
+                break;
+            }
+            println!("Waiting for tables to be created...");
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
         
         tokio::spawn(async move {
             if let Err(e) = consumer.run(consumer_tx).await {
@@ -82,15 +91,6 @@ impl Orchestrator {
                         match action {
                             Action::Vote(vote) => votes.push(vote),
                         }
-                    }
-
-                    // Wait until the tables are created
-                    loop {
-                        if loader.actions_repository.check_tables_created().await? {
-                            break;
-                        }
-                        println!("Waiting for tables to be created...");
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
                     
                     let user_votes = get_latest_user_votes(&votes);
