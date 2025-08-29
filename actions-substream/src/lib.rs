@@ -5,7 +5,7 @@ use pb::sf::ethereum::r#type::v2::{Block, Log};
 
 substreams_ethereum::init!();
 
-const FACTORY_TRACKED_CONTRACTS: &[[u8; 20]] = &[hex!("20b8d41da487c80e06667409e81ab8b173c9e076")];
+const FACTORY_TRACKED_CONTRACTS: &[[u8; 20]] = &[hex!("80eF8d87fafCB65F5399c6d28c72A27577616339")];
 
 #[substreams::handlers::map]
 fn map_actions(blk: Block) -> Result<Actions, substreams::errors::Error> {
