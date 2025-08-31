@@ -68,7 +68,7 @@ impl SubstreamsStreamProvider {
             .map_output
             .as_ref()
             .ok_or_else(|| ConsumerError::MissingField("map_output".to_string()))?;
-        let actions = Actions::decode(output.value.as_slice())
+            let actions = Actions::decode(output.value.as_slice())
             .map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
         let raw_actions = actions
             .actions
@@ -140,12 +140,9 @@ impl ConsumeActionsStream for SubstreamsStreamProvider {
                 }
                 Some(Ok(BlockResponse::New(data))) => {
                     let actions = self.process_block_scoped_data(&data).map_err(|e| ConsumerError::ProcessingBlockScopedData(e.to_string()))?;
-                    if actions.len() == 0 {
-                        let now = chrono::Utc::now();
-                        println!("{} - No actions for block {}", now.to_rfc3339(), data.clock.as_ref().unwrap().number);
-                        continue;
+                    if actions.len() > 0 {
+                        sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                     }
-                    sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
                     sender.send(StreamMessage::UndoSignal(undo_signal)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
