@@ -325,7 +325,7 @@ impl ActionsRepository for PostgresActionsRepository {
             result_votes.push(UserVote {
                 user_id: Address::from_hex(&v.user_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.user_id))?,
                 entity_id: v.entity_id,
-                space_id: v.space_id.clone(),
+                space_id: v.space_id,
                 vote_type: match v.vote_type {
                     0 => VoteValue::Up,
                     1 => VoteValue::Down,
@@ -376,7 +376,7 @@ impl ActionsRepository for PostgresActionsRepository {
         for c in counts {
             result_counts.push(VotesCount {
                 entity_id: c.entity_id,
-                space_id: c.space_id.clone(),
+                space_id: c.space_id,
                 upvotes: c.upvotes,
                 downvotes: c.downvotes,
             });
