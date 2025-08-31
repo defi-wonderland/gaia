@@ -89,7 +89,7 @@ impl PostgresActionsRepository {
                      .push_bind(format!("0x{}", hex::encode(vote_action.raw.sender.as_slice())))
                      .push_bind(vote_action.raw.entity.clone())
                      .push_bind(vote_action.raw.group_id.clone())
-                     .push_bind(vote_action.raw.space_pov.to_string())
+                     .push_bind(vote_action.raw.space_pov.clone())
                      .push_bind(vote_action.raw.metadata.as_ref().map(|b| b.as_ref().to_vec()))
                      .push_bind(vote_action.raw.block_number as i64)
                      .push_bind(voted_at)
@@ -133,7 +133,7 @@ impl PostgresActionsRepository {
                 "#,
                 format!("0x{}", hex::encode(vote.user_id.as_slice())),
                 vote.entity_id.clone(),
-                vote.space_id,
+                vote.space_id.clone(),
                 match vote.vote_type {
                     VoteValue::Up => 0,
                     VoteValue::Down => 1,
@@ -178,7 +178,7 @@ impl PostgresActionsRepository {
                     downvotes = EXCLUDED.downvotes
                 "#,
                 count.entity_id.clone(),
-                count.space_id,
+                count.space_id.clone(),
                 count.upvotes,
                 count.downvotes
             )
@@ -325,7 +325,7 @@ impl ActionsRepository for PostgresActionsRepository {
             result_votes.push(UserVote {
                 user_id: Address::from_hex(&v.user_id).map_err(|_| ActionsRepositoryError::InvalidAddress(v.user_id))?,
                 entity_id: v.entity_id,
-                space_id: v.space_id,
+                space_id: v.space_id.clone(),
                 vote_type: match v.vote_type {
                     0 => VoteValue::Up,
                     1 => VoteValue::Down,
@@ -376,7 +376,7 @@ impl ActionsRepository for PostgresActionsRepository {
         for c in counts {
             result_counts.push(VotesCount {
                 entity_id: c.entity_id,
-                space_id: c.space_id,
+                space_id: c.space_id.clone(),
                 upvotes: c.upvotes,
                 downvotes: c.downvotes,
             });
