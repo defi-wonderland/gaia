@@ -27,7 +27,7 @@ modules:
     blockFilter:
       module: ethcommon:index_events
       query:
-        string: evt_addr:0x80eF8d87fafCB65F5399c6d28c72A27577616339 # geo testing contract TODO: make this dynamic
+        string: evt_addr:0x80ef8d87fafcb65f5399c6d28c72a27577616339 # geo testing contract TODO: make this dynamic
     inputs:
       - source: sf.ethereum.type.v2.Block
     output:
