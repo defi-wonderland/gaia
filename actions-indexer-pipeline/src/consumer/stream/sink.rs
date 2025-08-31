@@ -68,7 +68,7 @@ impl SubstreamsStreamProvider {
             .map_output
             .as_ref()
             .ok_or_else(|| ConsumerError::MissingField("map_output".to_string()))?;
-            let actions = Actions::decode(output.value.as_slice())
+        let actions = Actions::decode(output.value.as_slice())
             .map_err(|e| ConsumerError::DecodingActions(e.to_string()))?;
         let raw_actions = actions
             .actions
