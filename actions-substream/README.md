@@ -24,7 +24,7 @@ Blockchain (Arbitrum) → Actions Substream → Actions Indexer Pipeline → Dat
 ## Contract Information
 
 - **Network**: Arbitrum
-- **Actions Contract**: `0x20b8d41da487c80e06667409e81ab8b173c9e076`
+- **Actions Contract**: `0x80eF8d87fafCB65F5399c6d28c72A27577616339`
 - **Starting Block**: 62436
 
 ## Data Schema
