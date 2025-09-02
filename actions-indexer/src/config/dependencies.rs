@@ -2,7 +2,7 @@ use actions_indexer_pipeline::consumer::ActionsConsumer;
 use actions_indexer_pipeline::loader::ActionsLoader;
 use actions_indexer_pipeline::processor::ActionsProcessor;
 use actions_indexer_pipeline::consumer::stream::sink::SubstreamsStreamProvider;
-use actions_indexer_repository::PostgresActionsRepository;
+use actions_indexer_repository::{PostgresActionsRepository, PostgresCursorRepository};
 use std::sync::Arc;
 use crate::config::handlers::VoteHandler;
 use crate::errors::IndexingError;
@@ -55,7 +55,9 @@ impl Dependencies {
         let mut actions_processor = ActionsProcessor::new();
         actions_processor.register_handler(1, 0, 0, Arc::new(VoteHandler));
         
-        let actions_loader = ActionsLoader::new(Arc::new(PostgresActionsRepository::new(pool).await.map_err(|e| IndexingError::Repository(e))?));
+        let actions_loader = ActionsLoader::new(
+            Arc::new(PostgresActionsRepository::new(pool.clone()).await.map_err(|e| IndexingError::ActionsRepository(e))?), 
+            Arc::new(PostgresCursorRepository::new(pool).await.map_err(|e| IndexingError::CursorRepository(e))?));
 
         Ok(Dependencies {
             consumer: Box::new(actions_consumer),
