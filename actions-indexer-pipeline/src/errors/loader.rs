@@ -3,6 +3,7 @@
 //! of processed action data.
 use thiserror::Error;
 use actions_indexer_repository::ActionsRepositoryError;
+use actions_indexer_repository::CursorRepositoryError;
 
 /// Represents errors that can occur within the action loader.
 ///
@@ -10,6 +11,8 @@ use actions_indexer_repository::ActionsRepositoryError;
 /// process, including errors propagated from the actions repository.
 #[derive(Debug, Error)]
 pub enum LoaderError {
-    #[error("Repository error: {0}")]
-    Repository(#[from] ActionsRepositoryError),
+    #[error("Actions repository error: {0}")]
+    ActionsRepository(#[from] ActionsRepositoryError),
+    #[error("Cursor repository error: {0}")]
+    CursorRepository(#[from] CursorRepositoryError),
 }
