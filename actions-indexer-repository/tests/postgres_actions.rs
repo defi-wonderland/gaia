@@ -9,9 +9,8 @@ use actions_indexer_repository::{ActionsRepository, PostgresActionsRepository};
 use actions_indexer_shared::types::{Action, ActionRaw, Vote, UserVote, VotesCount, VoteCriteria, VoteValue};
 use alloy::primitives::{Address, TxHash};
 use alloy::hex::FromHex;
-use uuid::Uuid;
+use uuid::{Uuid, uuid};
 use sqlx::Row;
-use uuid::uuid;
 
 /// Creates a test action raw data with default values.
 fn make_raw_action() -> ActionRaw {

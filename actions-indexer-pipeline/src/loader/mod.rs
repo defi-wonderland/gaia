@@ -53,7 +53,7 @@ impl ActionsLoader {
     /// Persists the latest processed block number to the block repository.
     ///
     /// This asynchronous method takes a reference to a `block_number` and delegates
-    /// the persistence operation to the internal `block_repository`.
+    /// the persistence operation to the internal `cursor_repository`.
     ///
     /// # Arguments
     ///
