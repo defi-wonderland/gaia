@@ -1,3 +1,5 @@
+//! Error types for the cursor repository.
+//! Defines specific errors that can occur during database operations related to the cursor.
 use thiserror::Error;
 
 #[derive(Debug, Error)]

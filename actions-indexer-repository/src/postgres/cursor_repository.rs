@@ -1,8 +1,16 @@
+//! PostgreSQL implementation of the cursor repository.
+//!
+//! Stores cursor state in a `meta` table to enable indexer resumption after restarts.
+
 use async_trait::async_trait;
 use crate::CursorRepository;
 use crate::errors::CursorRepositoryError;
 
+/// PostgreSQL-backed cursor repository.
+///
+/// Persists indexer cursors in a `meta` table with upsert operations for atomic updates.
 pub struct PostgresCursorRepository {
+    /// PostgreSQL connection pool
     pool: sqlx::PgPool,
 }
 
