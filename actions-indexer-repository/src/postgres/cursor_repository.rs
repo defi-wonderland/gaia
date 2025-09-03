@@ -38,7 +38,7 @@ impl CursorRepository for PostgresCursorRepository {
             "INSERT INTO meta (id, cursor, block_number) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET cursor = $2, block_number = $3",
             id,
             cursor,
-            block_number.to_string()
+            block_number
         )
         .execute(&self.pool)
         .await?;

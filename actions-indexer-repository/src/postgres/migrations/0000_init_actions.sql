@@ -31,6 +31,13 @@ CREATE TABLE votes_count (
     UNIQUE(entity_id, space_id)              
 );
 
+CREATE TABLE meta (
+    id              VARCHAR(255) PRIMARY KEY,
+    cursor          VARCHAR(255) NOT NULL,
+    block_number    BIGINT NOT NULL
+);
+
 CREATE INDEX idx_user_votes_user_entity_space ON user_votes(user_id, entity_id, space_id);
 CREATE INDEX idx_votes_count_space ON votes_count(space_id);
 CREATE INDEX idx_votes_count_entity_space ON votes_count(entity_id, space_id);
+CREATE INDEX idx_meta_cursor ON meta(cursor);
