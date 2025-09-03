@@ -33,7 +33,7 @@ CREATE TABLE votes_count (
 
 CREATE TABLE meta (
     id              VARCHAR(255) PRIMARY KEY,
-    cursor          VARCHAR(255) NOT NULL,
+    cursor          TEXT NOT NULL,
     block_number    BIGINT NOT NULL
 );
 
