@@ -3,7 +3,7 @@
 //! These tests require a real PostgreSQL database and use SQLx test macros
 //! to ensure proper test isolation and cleanup.
 //!
-//! Run with: `cargo test --test postgres_integration`
+//! Run with: `cargo test --test postgres_actions`
 
 use actions_indexer_repository::{ActionsRepository, PostgresActionsRepository};
 use actions_indexer_shared::types::{Action, ActionRaw, Vote, UserVote, VotesCount, VoteCriteria, VoteValue};
