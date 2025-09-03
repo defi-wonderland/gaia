@@ -112,10 +112,10 @@ impl Orchestrator {
 
                         if let Err(e) = loader.persist_changeset(&changeset).await {
                             eprintln!("Failed to persist changeset: {:?}", e);
+                        } else {
+                            save_cursor(&cursor, &block_number, loader.cursor_repository.as_ref()).await?;
                         }
                     }
-
-                    save_cursor(&cursor, &block_number, loader.cursor_repository.as_ref()).await?;
                 }
                 StreamMessage::UndoSignal(undo_signal) => {
                     println!("UndoSignal: {:?}", undo_signal);
@@ -257,7 +257,10 @@ fn compute_vote_delta(saved_vote: &Option<&UserVote>, new_vote: &UserVote) -> Vo
 }
 
 async fn save_cursor(cursor: &str, block_number: &i64, cursor_repository: &dyn CursorRepository) -> Result<(), OrchestratorError> {
-    cursor_repository.save_cursor("actions_indexer", cursor, block_number).await.map_err(|e|OrchestratorError::from(e))?;
+    if let Err(e) = cursor_repository.save_cursor("actions_indexer", cursor, block_number).await {
+        eprintln!("Failed to save cursor to database: {:?}", e);
+        return Err(OrchestratorError::from(e));
+    }
     Ok(())
 }
 
