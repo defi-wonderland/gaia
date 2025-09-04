@@ -9,10 +9,13 @@ dependencies = [
  "actions-indexer-pipeline",
  "actions-indexer-repository",
  "actions-indexer-shared",
+ "alloy",
+ "criterion 0.5.1",
  "dotenv",
  "sqlx",
  "thiserror 2.0.16",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -18,3 +18,13 @@ thiserror = "2.0.12"
 actions-indexer-pipeline = { path = "../actions-indexer-pipeline" }
 actions-indexer-shared = { path = "../actions-indexer-shared" }
 actions-indexer-repository = { path = "../actions-indexer-repository" }
+
+[dev-dependencies]
+actions-indexer-repository = { path = "../actions-indexer-repository" }
+criterion = { version = "0.5", features = ["html_reports"] }
+alloy = "1.0.24"
+uuid = "1.11"
+
+[[bench]]
+name = "processing"
+harness = false
