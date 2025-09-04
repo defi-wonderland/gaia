@@ -3,6 +3,8 @@
 use thiserror::Error;
 use crate::errors::consumer::ConsumerError;
 use actions_indexer_repository::errors::ActionsRepositoryError;
+use actions_indexer_repository::errors::CursorRepositoryError;
+use crate::errors::loader::LoaderError;
 
 /// Represents errors that can occur within the action orchestrator.
 ///
@@ -14,4 +16,8 @@ pub enum OrchestratorError {
     Consumer(#[from] ConsumerError),
     #[error("Actions repository error: {0}")]
     ActionsRepository(#[from] ActionsRepositoryError),
+    #[error("Cursor repository error: {0}")]
+    CursorRepository(#[from] CursorRepositoryError),
+    #[error("Loader error: {0}")]
+    Loader(#[from] LoaderError),
 }

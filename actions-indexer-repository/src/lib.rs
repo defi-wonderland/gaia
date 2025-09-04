@@ -7,5 +7,10 @@ pub mod interfaces;
 pub mod postgres;
 
 pub use errors::ActionsRepositoryError;
+pub use errors::CursorRepositoryError;
+
 pub use interfaces::ActionsRepository;
+pub use interfaces::CursorRepository;
+
 pub use postgres::PostgresActionsRepository;
+pub use postgres::PostgresCursorRepository;

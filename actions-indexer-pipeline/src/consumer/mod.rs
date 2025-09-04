@@ -18,12 +18,18 @@ use tokio::sync::mpsc;
 /// enabling communication between the stream provider and the orchestrator.
 #[derive(Debug)]
 pub enum StreamMessage {
-    BlockData(Vec<ActionRaw>),
+    BlockData(BlockDataMessage),
     UndoSignal(BlockUndoSignal),
     Error(ConsumerError),
     StreamEnd,
 }
 
+#[derive(Debug)]
+pub struct BlockDataMessage {
+    pub actions: Vec<ActionRaw>,
+    pub cursor: String,
+    pub block_number: i64,
+}
 /// Consumer component responsible for orchestrating blockchain action streaming.
 ///
 /// Acts as a coordinator between stream providers and the processing pipeline,
@@ -52,6 +58,11 @@ impl ActionsConsumer {
     ///
     /// This method delegates to the underlying stream provider to initiate the
     /// streaming process. It will continue until the stream ends or an error occurs.
+    /// 
+    /// # Arguments
+    ///
+    /// * `sender` - Channel sender for streaming messages to the orchestrator
+    /// * `cursor` - The cursor to start streaming from (optional)
     ///
     /// # Returns
     ///
@@ -63,8 +74,8 @@ impl ActionsConsumer {
     /// - The stream provider fails to initialize or connect
     /// - Network connectivity issues occur during streaming
     /// - Data parsing or validation errors happen
-    pub async fn run(&self, sender: mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError> {
-        self.stream_provider.stream_events(sender).await?;
+    pub async fn run(&self, sender: mpsc::Sender<StreamMessage>, cursor: Option<String>) -> Result<(), ConsumerError> {
+        self.stream_provider.stream_events(sender, cursor).await?;
         Ok(())
     }
 }
@@ -82,9 +93,10 @@ pub trait ConsumeActionsStream: Send + Sync {
     /// # Arguments
     ///
     /// * `sender` - Channel sender for streaming messages to the orchestrator
+    /// * `cursor` - The cursor to start streaming from (optional)
     ///
     /// # Returns
     ///
     /// A `Result` indicating success or a `ConsumerError` if streaming fails.
-    async fn stream_events(&self, sender: mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError>;
+    async fn stream_events(&self, sender: mpsc::Sender<StreamMessage>, cursor: Option<String>) -> Result<(), ConsumerError>;
 }
