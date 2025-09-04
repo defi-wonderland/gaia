@@ -8,5 +8,7 @@ pub enum IndexingError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("Repository error: {0}")]
-    Repository(#[from] actions_indexer_repository::ActionsRepositoryError),
+    ActionsRepository(#[from] actions_indexer_repository::ActionsRepositoryError),
+    #[error("Cursor repository error: {0}")]
+    CursorRepository(#[from] actions_indexer_repository::CursorRepositoryError),
 }

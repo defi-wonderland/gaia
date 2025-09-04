@@ -9,7 +9,7 @@ use crate::loader::ActionsLoader;
 use actions_indexer_shared::types::{Action, Changeset, UserVote, Vote, VoteCriteria, VoteCountCriteria, VoteValue, VotesCount};
 use tokio::sync::mpsc;
 use std::collections::HashMap;
-use actions_indexer_repository::ActionsRepository;
+use actions_indexer_repository::{ActionsRepository, CursorRepository};
 
 /// `Orchestrator` is responsible for coordinating the consumption, processing,
 /// and loading of actions.
@@ -62,9 +62,21 @@ impl Orchestrator {
         let consumer = self.actions_consumer;
         let processor = self.actions_processor;
         let loader = self.actions_loader;
+
+        // Wait until the tables are created
+        loop {
+            if loader.actions_repository.check_tables_created().await? {
+                break;
+            }
+            println!("Waiting for tables to be created...");
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+
+        // Get the cursor from the database
+        let cursor = loader.cursor_repository.get_cursor("actions_indexer").await.map_err(OrchestratorError::from)?;
         
         tokio::spawn(async move {
-            if let Err(e) = consumer.run(consumer_tx).await {
+            if let Err(e) = consumer.run(consumer_tx, cursor).await {
                 eprintln!("Consumer error: {:?}", e);
             }
         });
@@ -72,38 +84,37 @@ impl Orchestrator {
         while let Some(message) = rx.recv().await {
             match message {
                 StreamMessage::BlockData(block_data) => {
-                    let now = chrono::Utc::now();
-                    println!("{} - Begin processing block", now.to_rfc3339());
-                    
-                    let actions = processor.process(&block_data);
-                    
-                    let mut votes: Vec<Vote> = Vec::new();
-                    for action in actions.clone() {
-                        match action {
-                            Action::Vote(vote) => votes.push(vote),
+                    let actions = block_data.actions;
+                    let cursor = block_data.cursor;
+                    let block_number = block_data.block_number;
+
+                    if actions.len() > 0 {
+                        let now = chrono::Utc::now();
+                        println!("{} - Processing {} actions", now.to_rfc3339(), actions.len());
+                        
+                        let actions = processor.process(&actions);
+                        
+                        let mut votes: Vec<Vote> = Vec::new();
+                        for action in actions.clone() {
+                            match action {
+                                Action::Vote(vote) => votes.push(vote),
+                            }
                         }
-                    }
+                        
+                        let user_votes = get_latest_user_votes(&votes);
+                        let votes_count = update_vote_counts(&user_votes, loader.actions_repository.as_ref()).await?;
 
-                    // Wait until the tables are created
-                    loop {
-                        if loader.actions_repository.check_tables_created().await? {
-                            break;
+                        let changeset = Changeset { 
+                            actions: &actions,  
+                            user_votes: &user_votes,
+                            votes_count: &votes_count,
+                        };
+
+                        if let Err(e) = loader.persist_changeset(&changeset).await {
+                            eprintln!("Failed to persist changeset: {:?}", e);
+                        } else {
+                            save_cursor(&cursor, &block_number, loader.cursor_repository.as_ref()).await?;
                         }
-                        println!("Waiting for tables to be created...");
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    }
-                    
-                    let user_votes = get_latest_user_votes(&votes);
-                    let votes_count = update_vote_counts(&user_votes, loader.actions_repository.as_ref()).await?;
-
-                    let changeset = Changeset { 
-                        actions: &actions,  
-                        user_votes: &user_votes,
-                        votes_count: &votes_count,
-                    };
-
-                    if let Err(e) = loader.persist_changeset(&changeset).await {
-                        eprintln!("Failed to persist changeset: {:?}", e);
                     }
                 }
                 StreamMessage::UndoSignal(undo_signal) => {
@@ -245,6 +256,14 @@ fn compute_vote_delta(saved_vote: &Option<&UserVote>, new_vote: &UserVote) -> Vo
     VotesDelta { upvotes, downvotes }
 }
 
+async fn save_cursor(cursor: &str, block_number: &i64, cursor_repository: &dyn CursorRepository) -> Result<(), OrchestratorError> {
+    if let Err(e) = cursor_repository.save_cursor("actions_indexer", cursor, block_number).await {
+        eprintln!("Failed to save cursor to database: {:?}", e);
+        return Err(OrchestratorError::from(e));
+    }
+    Ok(())
+}
+
 #[cfg(test)]    
 mod tests {
     use alloy::primitives::Address;
@@ -256,16 +275,12 @@ mod tests {
         Address::from_hex("0x000000000000000000000000000000000000dEaD").unwrap()
     }
 
-    pub fn space_address() -> Address {
-        Address::from_hex("0x894a1a70311cd19a3ef33a38b18eab618394d6dd").unwrap()
-    }
-
     #[tokio::test]
     async fn test_calculate_votes_changes_upvote_downvote() {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -273,7 +288,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -288,7 +303,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -296,7 +311,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Remove,
             voted_at: 1713859200,
         };
@@ -311,7 +326,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -319,7 +334,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Up,
             voted_at: 1713859200,
         };
@@ -334,7 +349,7 @@ mod tests {
         let prev_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Down,
             voted_at: 1713859200,
         };
@@ -342,7 +357,7 @@ mod tests {
         let new_vote = UserVote {
             user_id: dead_address(),
             entity_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
-            space_id: space_address(),
+            space_id: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             vote_type: VoteValue::Remove,
             voted_at: 1713859200,
         };
@@ -367,11 +382,12 @@ mod tests {
             sender: dead_address(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: None,
-            space_pov: space_address(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             metadata: None,
             block_number: 1,
             block_timestamp: 1713859200,
             tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+            object_type: 0,
         };
 
         let vote = Vote {
@@ -385,7 +401,7 @@ mod tests {
         assert_eq!(user_votes.len(), 1);
         assert_eq!(user_votes[0].user_id, dead_address());
         assert_eq!(user_votes[0].entity_id, uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"));
-        assert_eq!(user_votes[0].space_id, space_address());
+        assert_eq!(user_votes[0].space_id, uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"));
         assert_eq!(user_votes[0].vote_type, VoteValue::Up);
         assert_eq!(user_votes[0].voted_at, 1713859200);
     }
@@ -408,11 +424,12 @@ mod tests {
             sender: dead_address(),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: None,
-            space_pov: space_address(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             metadata: None,
             block_number: 1,
             block_timestamp: 1713859200,
             tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+            object_type: 0,
         };
 
         // First vote (older)
@@ -441,7 +458,7 @@ mod tests {
         assert_eq!(user_votes.len(), 1);
         assert_eq!(user_votes[0].user_id, dead_address());
         assert_eq!(user_votes[0].entity_id, uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"));
-        assert_eq!(user_votes[0].space_id, space_address());
+        assert_eq!(user_votes[0].space_id, uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"));
         assert_eq!(user_votes[0].vote_type, VoteValue::Down);
         assert_eq!(user_votes[0].voted_at, 1713859300);
     }
@@ -462,11 +479,12 @@ mod tests {
                 sender: user1,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -478,11 +496,12 @@ mod tests {
                 sender: user2,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };
@@ -520,11 +539,12 @@ mod tests {
                 sender: user,
                 entity: entity1,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -536,11 +556,12 @@ mod tests {
                 sender: user,
                 entity: entity2,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Remove,
         };
@@ -579,11 +600,12 @@ mod tests {
                 sender: user1,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -595,11 +617,12 @@ mod tests {
                 sender: user2,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };
@@ -611,11 +634,12 @@ mod tests {
                 sender: user3,
                 entity: entity_id,
                 group_id: None,
-                space_pov: space_address(),
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
                 metadata: None,
                 block_number: 1,
                 block_timestamp: 1713859400,
                 tx_hash: TxHash::from_hex("0x7649ec009e05499f9bd47274ef4e73a6f7b24126f79ead19c6e6648cd4e83af6").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Remove,
         };
@@ -643,8 +667,8 @@ mod tests {
         
         let user = dead_address();
         let entity_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
-        let space1 = space_address();
-        let space2 = Address::from_hex("0x1234567890123456789012345678901234567890").unwrap();
+        let space1 = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+        let space2 = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318a");
         
         let vote1 = Vote {
             raw: ActionRaw {
@@ -658,6 +682,7 @@ mod tests {
                 block_number: 1,
                 block_timestamp: 1713859200,
                 tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Up,
         };
@@ -674,6 +699,7 @@ mod tests {
                 block_number: 1,
                 block_timestamp: 1713859300,
                 tx_hash: TxHash::from_hex("0x6538dbff9d04388e9ac36264cf493b8c96e05421e59ead18b6e6547bc3d72fc5").unwrap(),
+                object_type: 0,
             },
             vote: VoteValue::Down,
         };

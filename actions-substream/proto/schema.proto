@@ -15,11 +15,12 @@ message Action {
     uint64 action_type = 1;
     uint64 action_version = 2;
     string sender = 3;               // UserAddress (hex-encoded address)
-    string entity = 4;               // EntityId (UUID string)
+    string object_id = 4;            // ObjectId (UUID string)
     optional string group_id = 5;    // Optional GroupId (UUID string)
-    string space_pov = 6;            // SpaceAddress (hex-encoded address)
+    string space_pov = 6;            // SpacePOV (UUID string)
     optional bytes metadata = 7;     // Optional metadata bytes
     uint64 block_number = 8;         // BlockNumber
     uint64 block_timestamp = 9;      // BlockTimestamp
     string tx_hash = 10;             // TxHash (hex-encoded hash)
+    uint64 object_type = 11;         // Object type identifier
 }

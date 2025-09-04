@@ -23,11 +23,11 @@ binaries:
 modules:
   - name: map_actions
     kind: map
-    initialBlock: 62436
+    initialBlock: 64213
     blockFilter:
       module: ethcommon:index_events
       query:
-        string: evt_addr:0x20b8d41da487c80e06667409e81ab8b173c9e076 # geo testing contract TODO: make this dynamic
+        string: evt_addr:0x80ef8d87fafcb65f5399c6d28c72a27577616339 # geo testing contract TODO: make this dynamic
     inputs:
       - source: sf.ethereum.type.v2.Block
     output:

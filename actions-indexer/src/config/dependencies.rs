@@ -2,11 +2,15 @@ use actions_indexer_pipeline::consumer::ActionsConsumer;
 use actions_indexer_pipeline::loader::ActionsLoader;
 use actions_indexer_pipeline::processor::ActionsProcessor;
 use actions_indexer_pipeline::consumer::stream::sink::SubstreamsStreamProvider;
-use actions_indexer_repository::PostgresActionsRepository;
+use actions_indexer_repository::{PostgresActionsRepository, PostgresCursorRepository};
 use std::sync::Arc;
 use crate::config::handlers::VoteHandler;
 use crate::errors::IndexingError;
 
+// Use CARGO_MANIFEST_DIR to get path relative to the crate
+const PKG_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/geo-actions-v0.1.0.spkg");
+const MODULE_NAME: &str = "map_actions";
+    
 /// `Dependencies` struct holds the necessary components for the action indexer.
 ///
 /// It includes a consumer for ingesting actions, a processor for handling
@@ -32,10 +36,8 @@ impl Dependencies {
         let substreams_endpoint = std::env::var("SUBSTREAMS_ENDPOINT").expect("SUBSTREAMS_ENDPOINT must be set");
         let substreams_api_token = std::env::var("SUBSTREAMS_API_TOKEN").expect("SUBSTREAMS_API_TOKEN must be set");
 
-        let pool = sqlx::PgPool::connect(&database_url).await.map_err(|e| IndexingError::Database(e.into()))?;
-
-        let package_file = String::from("./src/package/geo-actions-v0.1.0.spkg");
-        let module_name = String::from("map_actions");
+        let package_file = PKG_FILE.to_string();
+        let module_name = MODULE_NAME.to_string();
         let block_range = None;
         let params = vec![];
 
@@ -50,9 +52,11 @@ impl Dependencies {
 
         let actions_consumer = ActionsConsumer::new(Box::new(substreams_stream_provider));
         let mut actions_processor = ActionsProcessor::new();
-        actions_processor.register_handler(1, 1, Arc::new(VoteHandler));
+        actions_processor.register_handler(1, 0, 0, Arc::new(VoteHandler));
         
-        let actions_loader = ActionsLoader::new(Arc::new(PostgresActionsRepository::new(pool).await.map_err(|e| IndexingError::Repository(e))?));
+        let actions_loader = ActionsLoader::new(
+            Arc::new(PostgresActionsRepository::new(pool.clone()).await.map_err(|e| IndexingError::ActionsRepository(e))?), 
+            Arc::new(PostgresCursorRepository::new(pool).await.map_err(|e| IndexingError::CursorRepository(e))?));
 
         Ok(Dependencies {
             consumer: Box::new(actions_consumer),
