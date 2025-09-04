@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::types::{EntityId, SpaceAddress};
+use crate::types::{EntityId, SpaceId};
 
 /// Represents the aggregated vote counts for an entity and space.
 ///
@@ -8,7 +8,7 @@ use crate::types::{EntityId, SpaceAddress};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VotesCount {
     pub entity_id: EntityId,
-    pub space_id: SpaceAddress,
+    pub space_id: SpaceId,
     pub upvotes: i64,
     pub downvotes: i64,
 }

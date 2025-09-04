@@ -19,7 +19,10 @@ pub use action_vote::{Vote, VoteValue};
 
 pub type EntityId = Uuid;
 pub type GroupId = Uuid;
-pub type SpaceAddress = Address;
+pub type SpaceId = Uuid;
 pub type UserAddress = Address;
-pub type VoteCriteria = (UserAddress, EntityId, SpaceAddress);
-pub type VoteCountCriteria = (EntityId, SpaceAddress);
+pub type VoteCriteria = (UserAddress, EntityId, SpaceId);
+pub type VoteCountCriteria = (EntityId, SpaceId);
+pub type ActionVersion = u64;
+pub type ActionType = u64;
+pub type ObjectType = u64;

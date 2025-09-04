@@ -15,7 +15,7 @@ use super::substreams_stream::{BlockResponse, SubstreamsStream};
 use prost::Message;
 use std::sync::Arc;
 use crate::errors::ConsumerError;
-use crate::consumer::{ConsumeActionsStream, StreamMessage};
+use crate::consumer::{ConsumeActionsStream, StreamMessage, BlockDataMessage};
 
 lazy_static! {
     static ref MODULE_NAME_REGEXP: Regex = Regex::new(r"^([a-zA-Z][a-zA-Z0-9_-]{0,63})$").unwrap();
@@ -58,6 +58,10 @@ impl SubstreamsStreamProvider {
     }
 
     pub fn process_block_scoped_data(&self, data: &BlockScopedData) -> Result<Vec<ActionRaw>, Error> {
+        let now = chrono::Utc::now();
+        let block_number = data.clock.as_ref().unwrap().number;
+        println!("{} - Processing block {}", now.to_rfc3339(), block_number);
+
         let output = data.output
             .as_ref()
             .ok_or_else(|| ConsumerError::MissingField("output".to_string()))?
@@ -110,14 +114,12 @@ impl SubstreamsStreamProvider {
 
 #[async_trait::async_trait]
 impl ConsumeActionsStream for SubstreamsStreamProvider {
-    async fn stream_events(&self, sender: tokio::sync::mpsc::Sender<StreamMessage>) -> Result<(), ConsumerError> {
+    async fn stream_events(&self, sender: tokio::sync::mpsc::Sender<StreamMessage>, cursor: Option<String>) -> Result<(), ConsumerError> {
         let package = read_package(&self.package_file, self.params.clone()).await.map_err(|e| ConsumerError::ReadingPackage(e.to_string()))?;
         let block_range = read_block_range(&package, &self.module_name, self.block_range.clone()).map_err(|e| ConsumerError::ReadingBlockRange(e.to_string()))?;
 
         let endpoint =
             Arc::new(SubstreamsEndpoint::new(&self.endpoint_url, self.token.clone()).await.map_err(|e| ConsumerError::ReadingEndpoint(e.to_string()))?);
-
-        let cursor: Option<String> = self.load_persisted_cursor().map_err(|e| ConsumerError::LoadingCursor(e.to_string()))?;
 
         let mut stream = SubstreamsStream::new(
             endpoint,
@@ -136,7 +138,11 @@ impl ConsumeActionsStream for SubstreamsStreamProvider {
                 }
                 Some(Ok(BlockResponse::New(data))) => {
                     let actions = self.process_block_scoped_data(&data).map_err(|e| ConsumerError::ProcessingBlockScopedData(e.to_string()))?;
-                    sender.send(StreamMessage::BlockData(actions)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                    sender.send(StreamMessage::BlockData(BlockDataMessage {
+                        actions,
+                        cursor: data.cursor,
+                        block_number: data.clock.unwrap().number as i64,
+                    })).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
                     sender.send(StreamMessage::UndoSignal(undo_signal)).await.map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
@@ -369,6 +375,7 @@ impl TryFrom<&Action> for ActionRaw {
             block_timestamp: action.block_timestamp.into(),
             tx_hash: action.tx_hash.parse()
                 .map_err(|e| ConsumerError::InvalidTxHash(format!("tx_hash: {}", e)))?,
+            object_type: 0,
         })
     }
 }

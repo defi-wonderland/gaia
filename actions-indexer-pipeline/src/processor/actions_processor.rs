@@ -1,12 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::processor::{HandleAction, ProcessActions};
-use actions_indexer_shared::types::{Action, ActionRaw};
+use actions_indexer_shared::types::{Action, ActionRaw, ActionType, ActionVersion, ObjectType};
 
 /// `ActionsProcessor` is responsible for processing raw `ActionEvent` data into structured `Action` data.
 /// It manages a registry of handlers for different action versions and kinds.
 pub struct ActionsProcessor {
-    handler_registry: HashMap<(u64, u64), Arc<dyn HandleAction>>,
+    handler_registry: HashMap<(ActionVersion, ActionType, ObjectType), Arc<dyn HandleAction>>,
 }
 
 impl ActionsProcessor {
@@ -26,8 +26,8 @@ impl ActionsProcessor {
     /// * `kind` - The kind of the action to register the handler for.
     /// * `handler` - An `Arc` boxed trait object that implements `HandleAction`,
     ///             responsible for processing the specific action type.
-    pub fn register_handler(&mut self, version: u64, kind: u64, handler: Arc<dyn HandleAction>) {
-        self.handler_registry.insert((version, kind), handler);
+    pub fn register_handler(&mut self, version: ActionVersion, kind: ActionType, object_type: ObjectType, handler: Arc<dyn HandleAction>) {
+        self.handler_registry.insert((version, kind, object_type), handler);
     }
 }
 
@@ -47,7 +47,7 @@ impl ProcessActions for ActionsProcessor {
     fn process(&self, actions: &[ActionRaw]) -> Vec<Action> {
         let mut results = Vec::new();
         for action in actions {
-            let handler = self.handler_registry.get(&(action.action_version, action.action_type));
+            let handler = self.handler_registry.get(&(action.action_version, action.action_type, action.object_type));
             if let Some(handler) = handler {
                 if let Ok(result) = handler.handle(action) {
                     results.push(result);
@@ -92,9 +92,9 @@ mod tests {
     fn make_action_event(payload_byte: u8) -> ActionRaw {
         ActionRaw {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
-            action_type: 1,
+            action_type: 0,
             action_version: 1,
-            space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
             metadata: Some(Bytes::from(vec![payload_byte])),
@@ -104,6 +104,7 @@ mod tests {
                 "0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4",
             )
             .unwrap(),
+            object_type: 0,
         }
     }
 
@@ -119,7 +120,7 @@ mod tests {
 
     fn mocked_processor() -> ActionsProcessor {
         let mut processor = ActionsProcessor::new();
-        processor.register_handler(1, 1, Arc::new(MockHandler));
+        processor.register_handler(1, 0, 0, Arc::new(MockHandler));
         processor
     }
 
@@ -193,7 +194,7 @@ mod tests {
             sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
             action_type: 2, // no handler defined for this action type
             action_version: 1,
-            space_pov: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
+            space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
             entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
             metadata: Some(Bytes::from(vec![0])),
@@ -203,6 +204,7 @@ mod tests {
                 "0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4",
             )
             .unwrap(),
+            object_type: 0,
         };
         let result = processor.process(&[action_event.clone()]);
         assert!(result.len() == 0); // no actions were processed

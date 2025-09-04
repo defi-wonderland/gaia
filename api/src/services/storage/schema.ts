@@ -386,7 +386,6 @@ export type DbProperty = InferSelectModel<typeof values>;
 export type DbRelations = InferSelectModel<typeof relations>;
 export type DbMember = InferSelectModel<typeof members>;
 export type DbEditor = InferSelectModel<typeof editors>;
-export type DbSubspace = InferSelectModel<typeof subspaces>;
 
 /** Actions Schema definitions */
 
@@ -417,7 +416,7 @@ export const rawActions = pgTable(
 		sender: varchar("sender", { length: 42 }).notNull(),
 		entity: uuid("entity").notNull(),
 		groupId: uuid("group_id"),
-		spacePov: varchar("space_pov", { length: 42 }).notNull(),
+		spacePov: uuid("space_pov").notNull(),
 		metadata: bytea("metadata"),
 		blockNumber: bigint("block_number", { mode: "number" }).notNull(),
 		blockTimestamp: timestamp("block_timestamp", {
@@ -438,7 +437,7 @@ export const userVotes = pgTable(
 		id: serial("id").primaryKey(),
 		userId: varchar("user_id", { length: 42 }).notNull(),
 		entityId: uuid("entity_id").notNull(),
-		spaceId: varchar("space_id", { length: 42 }).notNull(),
+		spaceId: uuid("space_id").notNull(),
 		voteType: smallint("vote_type").notNull(),
 		votedAt: timestamp("voted_at", {
 			withTimezone: true,
@@ -471,7 +470,7 @@ export const votesCount = pgTable(
 	{
 		id: serial("id").primaryKey(),
 		entityId: uuid("entity_id").notNull(),
-		spaceId: varchar("space_id", { length: 42 }).notNull(),
+		spaceId: uuid("space_id").notNull(),
 		upvotes: bigint("upvotes", { mode: "number" }).notNull().default(0),
 		downvotes: bigint("downvotes", { mode: "number" }).notNull().default(0),
 	},
