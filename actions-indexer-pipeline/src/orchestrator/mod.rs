@@ -115,7 +115,12 @@ impl Orchestrator {
                         } else {
                             save_cursor(&cursor, &block_number, loader.cursor_repository.as_ref()).await?;
                         }
+                    } else {
+                        if !cursor.is_empty() {
+                            save_cursor(&cursor, &block_number, loader.cursor_repository.as_ref()).await?;
+                        }
                     }
+
                 }
                 StreamMessage::UndoSignal(undo_signal) => {
                     println!("UndoSignal: {:?}", undo_signal);
