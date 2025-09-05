@@ -178,7 +178,7 @@ mod tests {
         ));
         
         let mut mock_processor = ActionsProcessor::new();
-        mock_processor.register_handler(1, 1, Arc::new(VoteHandler));
+        mock_processor.register_handler(1, 1, 0, Arc::new(VoteHandler));
         
         // Note: We can't easily create a mock loader without a real database connection
         // This test focuses on the struct creation aspects
@@ -217,7 +217,7 @@ mod tests {
         let mut processor = ActionsProcessor::new();
         
         // This should not panic
-        processor.register_handler(1, 1, Arc::new(vote_handler));
+        processor.register_handler(1, 1, 0, Arc::new(vote_handler));
         
         // Verify the processor was created successfully
         assert!(true); // If we get here, registration worked
