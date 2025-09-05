@@ -330,3 +330,73 @@ COMMENT ON CONSTRAINT members_address_space_id_pk ON MEMBERS IS E'@omit';
 COMMENT ON CONSTRAINT editors_address_space_id_pk ON EDITORS IS E'@omit';
 
 COMMENT ON TABLE ipfs_cache IS E'@omit';
+
+-- Create enum for sort order if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sort_order') THEN
+        CREATE TYPE sort_order AS ENUM ('ASC', 'DESC');
+    END IF;
+END $$;
+
+-- Custom query function to order entities by property value  
+CREATE OR REPLACE FUNCTION entities_ordered_by_property(
+  property_id uuid,
+  space_id uuid DEFAULT NULL,
+  sort_direction sort_order DEFAULT 'ASC'
+)
+RETURNS SETOF entities AS $$
+  WITH filtered_entities AS (
+    SELECT DISTINCT
+      e.id,
+      e.created_at,
+      e.created_at_block,
+      e.updated_at,
+      e.updated_at_block,
+      p.type as property_type,
+      v.string,
+      v.number,
+      v.boolean,
+      v.time,
+      v.point
+    FROM entities e
+    INNER JOIN values v ON v.entity_id = e.id
+    INNER JOIN properties p ON v.property_id = p.id
+    WHERE v.property_id = entities_ordered_by_property.property_id
+      AND (entities_ordered_by_property.space_id IS NULL OR v.space_id = entities_ordered_by_property.space_id)
+      AND (
+        (p.type = 'String' AND v.string IS NOT NULL AND trim(v.string) != '') OR
+        (p.type = 'Number' AND v.number IS NOT NULL) OR
+        (p.type = 'Boolean' AND v.boolean IS NOT NULL) OR
+        (p.type = 'Time' AND v.time IS NOT NULL AND trim(v.time) != '') OR
+        (p.type = 'Point' AND v.point IS NOT NULL AND trim(v.point) != '') OR
+        (p.type = 'Relation' AND FALSE)
+      )
+  )
+  SELECT 
+    id,
+    created_at,
+    created_at_block,
+    updated_at,
+    updated_at_block
+  FROM filtered_entities
+  ORDER BY 
+    CASE WHEN sort_direction = 'ASC' THEN
+      CASE 
+        WHEN property_type = 'String' THEN string
+        WHEN property_type = 'Boolean' THEN boolean::text
+        WHEN property_type = 'Time' THEN time
+        WHEN property_type = 'Point' THEN point
+      END
+    END ASC,
+    CASE WHEN sort_direction = 'ASC' AND property_type = 'Number' THEN number::numeric END ASC,
+    CASE WHEN sort_direction = 'DESC' THEN
+      CASE 
+        WHEN property_type = 'String' THEN string
+        WHEN property_type = 'Boolean' THEN boolean::text
+        WHEN property_type = 'Time' THEN time
+        WHEN property_type = 'Point' THEN point
+      END
+    END DESC,
+    CASE WHEN sort_direction = 'DESC' AND property_type = 'Number' THEN number::numeric END DESC;
+$$ LANGUAGE sql STABLE;
