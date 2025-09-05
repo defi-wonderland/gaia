@@ -8,10 +8,10 @@
 		"generate": "graphql-codegen --config codegen.yml",
 		"test": "vitest",
 		"lint": "biome check src/ --apply",
-		"test:ci": "bun test",
+		"check": "tsc --noEmit",
 		"db:setup": "bun run scripts/setup-test-db.ts",
 		"db:generate": "bun drizzle-kit generate",
-		"db:migrate": "bun drizzle-kit migrate && scripts/migrate-fns.sh"
+		"db:migrate": "bun drizzle-kit migrate && scripts/migrate-custom.sh"
 	},
 	"author": "Byron Guina",
 	"license": "ISC",
@@ -52,11 +52,12 @@
 		"@graphql-codegen/cli": "^5.0.6",
 		"@graphql-codegen/typescript": "^4.1.6",
 		"@graphql-codegen/typescript-resolvers": "^4.5.1",
-		"@types/bun": "^1.2.13",
+		"@types/bun": "^1.2.21",
 		"@types/node": "^22.15.17",
 		"@types/pg": "^8.15.2",
 		"@vitest/ui": "^2.0.0",
 		"drizzle-kit": "^0.31.0",
+		"typescript": "^5.9.2",
 		"vitest": "^2.0.0"
 	}
 }

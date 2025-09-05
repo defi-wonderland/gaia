@@ -3,7 +3,9 @@ import {
 	type InferSelectModel,
 } from "drizzle-orm";
 import {
+	bigint,
 	boolean,
+	customType,
 	decimal,
 	index,
 	jsonb,
@@ -11,8 +13,12 @@ import {
 	pgTable,
 	primaryKey,
 	serial,
+	smallint,
 	text,
+	timestamp,
+	unique,
 	uuid,
+	varchar,
 } from "drizzle-orm/pg-core";
 
 // Enable the pg_trgm extension for similarity searches (executed at runtime)
@@ -66,13 +72,22 @@ export const spaces = pgTable("spaces", {
 	personalAddress: text(),
 });
 
-export const entities = pgTable("entities", {
-	id: uuid().primaryKey(),
-	createdAt: text().notNull(),
-	createdAtBlock: text().notNull(),
-	updatedAt: text().notNull(),
-	updatedAtBlock: text().notNull(),
-});
+export const entities = pgTable(
+	"entities",
+	{
+		id: uuid().primaryKey(),
+		createdAt: text().notNull(),
+		createdAtBlock: text().notNull(),
+		updatedAt: text().notNull(),
+		updatedAtBlock: text().notNull(),
+	},
+	(table) => [
+		// Index for ordering queries
+		index("entities_updated_at_idx").on(table.updatedAt),
+		// Composite index for ordering with id for stable pagination
+		index("entities_updated_at_id_idx").on(table.updatedAt, table.id),
+	],
+);
 
 export const dataTypesEnum = pgEnum("dataTypes", [
 	"String",
@@ -238,6 +253,23 @@ export const editors = pgTable(
 	],
 );
 
+export const subspaces = pgTable(
+	"subspaces",
+	{
+		parentSpaceId: uuid()
+			.notNull()
+			.references(() => spaces.id),
+		childSpaceId: uuid()
+			.notNull()
+			.references(() => spaces.id),
+	},
+	(table) => [
+		primaryKey({ columns: [table.parentSpaceId, table.childSpaceId] }),
+		index("subspaces_parent_space_id_idx").on(table.parentSpaceId),
+		index("subspaces_child_space_id_idx").on(table.childSpaceId),
+	],
+);
+
 export const entityForeignValues = drizzleRelations(
 	entities,
 	({ many, one }) => ({
@@ -324,9 +356,28 @@ export const editorsRelations = drizzleRelations(editors, ({ one }) => ({
 	}),
 }));
 
+export const subspacesRelations = drizzleRelations(subspaces, ({ one }) => ({
+	parentSpace: one(spaces, {
+		fields: [subspaces.parentSpaceId],
+		references: [spaces.id],
+		relationName: "parentSpace",
+	}),
+	childSpace: one(spaces, {
+		fields: [subspaces.childSpaceId],
+		references: [spaces.id],
+		relationName: "childSpace",
+	}),
+}));
+
 export const spacesRelations = drizzleRelations(spaces, ({ many }) => ({
 	members: many(members),
 	editors: many(editors),
+	parentSpaces: many(subspaces, {
+		relationName: "childSpace",
+	}),
+	childSpaces: many(subspaces, {
+		relationName: "parentSpace",
+	}),
 }));
 
 export type IpfsCacheItem = InferSelectModel<typeof ipfsCache>;
@@ -335,3 +386,109 @@ export type DbProperty = InferSelectModel<typeof values>;
 export type DbRelations = InferSelectModel<typeof relations>;
 export type DbMember = InferSelectModel<typeof members>;
 export type DbEditor = InferSelectModel<typeof editors>;
+export type DbSubspace = InferSelectModel<typeof subspaces>;
+
+/** Actions Schema definitions */
+
+/**
+ * bytea
+ *
+ * This is a custom type for the bytea data type.
+ * It is used to store binary data in the database.
+ */
+export const bytea = customType<{
+	data: Buffer;
+	default: false;
+}>({
+	dataType() {
+		return "bytea";
+	},
+});
+
+/**
+ * raw_actions
+ */
+export const rawActions = pgTable(
+	"raw_actions",
+	{
+		id: serial("id").primaryKey(),
+		actionType: bigint("action_type", { mode: "number" }).notNull(),
+		actionVersion: bigint("action_version", { mode: "number" }).notNull(),
+		sender: varchar("sender", { length: 42 }).notNull(),
+		entity: uuid("entity").notNull(),
+		groupId: uuid("group_id"),
+		spacePov: varchar("space_pov", { length: 42 }).notNull(),
+		metadata: bytea("metadata"),
+		blockNumber: bigint("block_number", { mode: "number" }).notNull(),
+		blockTimestamp: timestamp("block_timestamp", {
+			withTimezone: true,
+			mode: "date",
+		}).notNull(),
+		txHash: varchar("tx_hash", { length: 66 }).notNull(),
+	},
+	// no explicit indexes/uniques defined in SQL for this table
+);
+
+/**
+ * user_votes
+ */
+export const userVotes = pgTable(
+	"user_votes",
+	{
+		id: serial("id").primaryKey(),
+		userId: varchar("user_id", { length: 42 }).notNull(),
+		entityId: uuid("entity_id").notNull(),
+		spaceId: varchar("space_id", { length: 42 }).notNull(),
+		voteType: smallint("vote_type").notNull(),
+		votedAt: timestamp("voted_at", {
+			withTimezone: true,
+			mode: "date",
+		}).notNull(),
+	},
+	(table) => {
+		return {
+			// UNIQUE(user_id, entity_id, space_id)
+			uqUserEntitySpace: unique("user_votes_user_entity_space_unique").on(
+				table.userId,
+				table.entityId,
+				table.spaceId,
+			),
+			// CREATE INDEX idx_user_votes_user_entity_space ON user_votes(user_id, entity_id, space_id)
+			idxUserEntitySpace: index("idx_user_votes_user_entity_space").on(
+				table.userId,
+				table.entityId,
+				table.spaceId,
+			),
+		};
+	},
+);
+
+/**
+ * votes_count
+ */
+export const votesCount = pgTable(
+	"votes_count",
+	{
+		id: serial("id").primaryKey(),
+		entityId: uuid("entity_id").notNull(),
+		spaceId: varchar("space_id", { length: 42 }).notNull(),
+		upvotes: bigint("upvotes", { mode: "number" }).notNull().default(0),
+		downvotes: bigint("downvotes", { mode: "number" }).notNull().default(0),
+	},
+	(table) => {
+		return {
+			// UNIQUE(entity_id, space_id)
+			uqEntitySpace: unique("votes_count_entity_space_unique").on(
+				table.entityId,
+				table.spaceId,
+			),
+			// CREATE INDEX idx_votes_count_space ON votes_count(space_id)
+			idxSpace: index("idx_votes_count_space").on(table.spaceId),
+			// CREATE INDEX idx_votes_count_entity_space ON votes_count(entity_id, space_id)
+			idxEntitySpace: index("idx_votes_count_entity_space").on(
+				table.entityId,
+				table.spaceId,
+			),
+		};
+	},
+);

@@ -1,0 +1,35 @@
+specVersion: v0.1.0
+package:
+  name: geo_actions
+  version: v0.1.0
+
+imports:
+    ethcommon: https://spkg.io/streamingfast/ethereum-common-v0.3.0.spkg
+
+protobuf:
+  files:
+    - schema.proto
+  importPaths:
+    - ./proto
+  excludePaths:
+    - sf/substreams
+    - google
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ../target/wasm32-unknown-unknown/release/substreams.wasm
+
+modules:
+  - name: map_actions
+    kind: map
+    initialBlock: 62436
+    blockFilter:
+      module: ethcommon:index_events
+      query:
+        string: evt_addr:0x20b8d41da487c80e06667409e81ab8b173c9e076 # geo testing contract TODO: make this dynamic
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:actions.v1.Actions
+network: arbitrum
