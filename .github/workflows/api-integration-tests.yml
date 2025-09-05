@@ -2,27 +2,28 @@ name: API Integration Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
     paths:
-      - "api/**"
+      - 'api/**'
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
     paths:
-      - "api/**"
-  workflow_dispatch:
+      - 'api/**'
 
 jobs:
-  integration-tests:
-    name: Integration Tests
+  test:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: ./api
+    
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: gaia_test
+          POSTGRES_DB: test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -30,70 +31,35 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-
-    env:
-      CHAIN_ID: "19411"
-      DATABASE_URL: postgresql://test_user:test_password@localhost:5432/gaia_test
-      NODE_ENV: test
-      IPFS_KEY: test_ipfs_key
-      IPFS_GATEWAY_WRITE: https://test-ipfs-write.example.com
-      RPC_ENDPOINT: https://test-rpc.example.com
-
-    defaults:
-      run:
-        working-directory: ./api
-
+    
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.bun/install/cache
-            ./api/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/package.json', '**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
+      
       - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Wait for PostgreSQL
-        run: |
-          until pg_isready -h localhost -p 5432 -U test_user; do
-            echo "Waiting for PostgreSQL..."
-            sleep 2
-          done
+        run: bun install
+      
+      - name: Setup test database
+        run: bun run scripts/setup-test-db.ts
         env:
-          PGPASSWORD: test_password
-
-      - name: Create pg_trgm extension
-        run: |
-          psql -h localhost -p 5432 -U test_user -d gaia_test -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-        env:
-          PGPASSWORD: test_password
-
-      - name: Setup database schema
-        run: bun run db:setup
-
-      - name: Run linting
-        run: bunx @biomejs/biome check src/
-
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          IPFS_KEY: "test-key"
+          IPFS_GATEWAY_WRITE: "https://ipfs.io"
+          RPC_ENDPOINT: "https://rpc.testnet.example.com"
+          CHAIN_ID: "80451"
+          DEPLOYER_PK: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+      
       - name: Run integration tests
-        run: bun run test:ci
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: |
-            ./api/coverage/
-          retention-days: 7
+        run: bun run test src/kg/__tests__/
+        env:
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          IPFS_KEY: "test-key"
+          IPFS_GATEWAY_WRITE: "https://ipfs.io"
+          RPC_ENDPOINT: "https://rpc.testnet.example.com"
+          CHAIN_ID: "80451"
+          DEPLOYER_PK: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"

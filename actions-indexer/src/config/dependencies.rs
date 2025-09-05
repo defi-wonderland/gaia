@@ -53,7 +53,9 @@ impl Dependencies {
         let actions_consumer = ActionsConsumer::new(Box::new(substreams_stream_provider));
         let mut actions_processor = ActionsProcessor::new();
         actions_processor.register_handler(1, 0, 0, Arc::new(VoteHandler));
-        
+
+        let pool = sqlx::PgPool::connect(&database_url).await.map_err(|e| IndexingError::Database(e.into()))?;
+
         let actions_loader = ActionsLoader::new(
             Arc::new(PostgresActionsRepository::new(pool.clone()).await.map_err(|e| IndexingError::ActionsRepository(e))?), 
             Arc::new(PostgresCursorRepository::new(pool).await.map_err(|e| IndexingError::CursorRepository(e))?));

@@ -26,7 +26,7 @@ async function setupTestDatabase() {
 
 		// Run migrations using drizzle-kit
 		console.log("📋 Running database migrations...")
-		const result = await $`bunx drizzle-kit push`.env({
+		const result = await $`bun drizzle-kit push`.env({
 			DATABASE_URL: databaseUrl,
 		})
 
@@ -38,9 +38,8 @@ async function setupTestDatabase() {
 			process.exit(1)
 		}
 
-		// Run SQL functions script
 		console.log("🔧 Running SQL functions script...")
-		const fnResult = await $`./scripts/migrate-fns.sh`.env({
+		const fnResult = await $`./scripts/migrate-custom.sh`.env({
 			DATABASE_URL: databaseUrl,
 		})
 
