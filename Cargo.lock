@@ -967,7 +967,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ead05aa318aa28c5eb1cf8e28f5382932b58986e2b73da6647c4be3d9af1ec59"
 dependencies = [
  "backoff",
- "bitflags 2.9.3",
+ "bitflags 2.9.4",
  "bitflags_serde_shim",
  "bytes",
  "chrono",
