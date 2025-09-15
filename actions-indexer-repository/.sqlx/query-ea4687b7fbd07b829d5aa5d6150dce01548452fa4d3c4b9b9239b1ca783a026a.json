@@ -6,7 +6,7 @@
       {
         "ordinal": 0,
         "name": "cursor",
-        "type_info": "Varchar"
+        "type_info": "Text"
       }
     ],
     "parameters": {

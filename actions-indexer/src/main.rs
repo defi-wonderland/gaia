@@ -1,11 +1,5 @@
-mod config;
-mod errors;
-
-use crate::config::Dependencies;
-
+use actions_indexer::{Dependencies, IndexingError};
 use dotenv::dotenv;
-
-use crate::errors::IndexingError;
 use actions_indexer_pipeline::orchestrator::Orchestrator;
 
 /// Main entry point for the Actions Indexer application.
