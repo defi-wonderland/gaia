@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use sqlx::{postgres::PgPoolOptions, Postgres, QueryBuilder, Row};
+use tracing::error;
 use uuid::Uuid;
 
 use crate::models::{
@@ -12,6 +13,7 @@ use crate::models::{
     },
     relations::{SetRelationItem, UnsetRelationItem, UpdateRelationItem},
     spaces::{SpaceItem, SpaceType},
+    subspaces::SubspaceItem,
     values::{ValueChangeType, ValueOp},
 };
 
@@ -179,6 +181,31 @@ impl PostgresStorage {
             id,
             data_type: property_type,
         })
+    }
+
+    pub async fn get_all_properties(&self) -> Result<Vec<PropertyItem>, StorageError> {
+        let rows = sqlx::query("SELECT id, type::text as type FROM properties")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut properties = Vec::new();
+        for row in rows {
+            let id: Uuid = row.get("id");
+            let type_value: String = row.get("type");
+
+            let property_type = string_to_data_type(&type_value).ok_or_else(|| {
+                sqlx::Error::Decode(
+                    format!("Invalid enum value '{}' for dataTypes enum", type_value).into(),
+                )
+            })?;
+
+            properties.push(PropertyItem {
+                id,
+                data_type: property_type,
+            });
+        }
+
+        Ok(properties)
     }
 
     pub async fn get_member(
@@ -494,7 +521,7 @@ impl StorageBackend for PostgresStorage {
         let result = query_builder.build().execute(&mut **tx).await;
 
         if let Err(error) = result {
-            println!("Error writing relations {}", error);
+            error!("Error writing relations: {}", error);
         }
 
         Ok(())
@@ -805,6 +832,75 @@ impl StorageBackend for PostgresStorage {
             "#,
             &addresses,
             &space_ids
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn insert_subspaces(
+        &self,
+        subspaces: &Vec<SubspaceItem>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), StorageError> {
+        if subspaces.is_empty() {
+            return Ok(());
+        }
+
+        let mut subspace_ids: Vec<Uuid> = Vec::new();
+        let mut parent_space_ids: Vec<Uuid> = Vec::new();
+
+        for subspace in subspaces {
+            subspace_ids.push(subspace.subspace_id);
+            parent_space_ids.push(subspace.parent_space_id);
+        }
+
+        sqlx::query!(
+            r#"
+            INSERT INTO subspaces (child_space_id, parent_space_id)
+            SELECT child_space_id, parent_space_id
+            FROM UNNEST($1::uuid[], $2::uuid[])
+            AS t(child_space_id, parent_space_id)
+            ON CONFLICT (parent_space_id, child_space_id) DO NOTHING
+            "#,
+            &subspace_ids,
+            &parent_space_ids
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn remove_subspaces(
+        &self,
+        subspaces: &Vec<SubspaceItem>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), StorageError> {
+        if subspaces.is_empty() {
+            return Ok(());
+        }
+
+        let mut subspace_ids: Vec<Uuid> = Vec::new();
+        let mut parent_space_ids: Vec<Uuid> = Vec::new();
+
+        for subspace in subspaces {
+            subspace_ids.push(subspace.subspace_id);
+            parent_space_ids.push(subspace.parent_space_id);
+        }
+
+        sqlx::query!(
+            r#"
+            DELETE FROM subspaces
+            WHERE (child_space_id, parent_space_id) IN (
+                SELECT child_space_id, parent_space_id
+                FROM UNNEST($1::uuid[], $2::uuid[])
+                AS t(child_space_id, parent_space_id)
+            )
+            "#,
+            &subspace_ids,
+            &parent_space_ids
         )
         .execute(&mut **tx)
         .await?;
