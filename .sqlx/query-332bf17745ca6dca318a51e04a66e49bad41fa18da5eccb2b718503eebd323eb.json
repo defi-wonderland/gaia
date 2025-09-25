@@ -1,12 +1,12 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT cursor FROM meta WHERE id = $1",
+  "query": "SELECT COUNT(*) as count FROM meta WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "cursor",
-        "type_info": "Text"
+        "name": "count",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -15,8 +15,8 @@
       ]
     },
     "nullable": [
-      false
+      null
     ]
   },
-  "hash": "ea4687b7fbd07b829d5aa5d6150dce01548452fa4d3c4b9b9239b1ca783a026a"
+  "hash": "332bf17745ca6dca318a51e04a66e49bad41fa18da5eccb2b718503eebd323eb"
 }
