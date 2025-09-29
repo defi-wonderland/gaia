@@ -44,6 +44,7 @@ use main_voting_plugin::events::{
     RemoveEditorProposalCreated as RemoveEditorProposalCreatedEvent,
     RemoveMemberProposalCreated as RemoveMemberProposalCreatedEvent,
     RemoveSubspaceProposalCreated as RemoveSubspaceProposalCreatedEvent,
+    MembersAdded as MembersAddedEvent,
 };
 use majority_voting_base_plugin::events::VoteCast as VoteCastEvent;
 use personal_admin_setup::events::GeoPersonalAdminPluginCreated as GeoPersonalAdminPluginCreatedEvent;
@@ -267,23 +268,36 @@ fn map_initial_editors_added(
     Ok(InitialEditorsAdded { editors })
 }
 
+/// Processes member addition events from blockchain logs.
+/// 
+/// Handles both individual `MemberAdded(address, address)` and batch `MembersAdded(address[], address)` events.
+/// Extracted from [`map_members_added`] for unit testing purposes.
 #[substreams::handlers::map]
-fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {
-    let members: Vec<MemberAdded> = block
-        .logs()
-        .filter_map(|log| {
-            if let Some(members_approved) = MemberAddedEvent::match_and_decode(log) {
-                return Some(MemberAdded {
+fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {    
+    let mut members: Vec<MemberAdded> = Vec::new();
+
+    for log in block.logs() {
+        // Handle individual MemberAdded events
+        if let Some(member_added) = MemberAddedEvent::match_and_decode(log) {
+            members.push(MemberAdded {
+                change_type: "added".to_string(),
+                main_voting_plugin_address: format_hex(&log.address()),
+                member_address: format_hex(&member_added.member),
+                dao_address: format_hex(&member_added.dao),
+            });
+        }
+        // Handle batch MembersAdded events
+        else if let Some(members_added) = MembersAddedEvent::match_and_decode(log) {
+            for member in members_added.members {
+                members.push(MemberAdded {
                     change_type: "added".to_string(),
                     main_voting_plugin_address: format_hex(&log.address()),
-                    member_address: format_hex(&members_approved.member),
-                    dao_address: format_hex(&members_approved.dao),
+                    member_address: format_hex(&member),
+                    dao_address: format_hex(&members_added.dao),
                 });
             }
-
-            return None;
-        })
-        .collect();
+        }
+    }
 
     Ok(MembersAdded { members })
 }
