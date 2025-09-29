@@ -274,30 +274,35 @@ fn map_initial_editors_added(
 /// Extracted from [`map_members_added`] for unit testing purposes.
 #[substreams::handlers::map]
 fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {    
-    let mut members: Vec<MemberAdded> = Vec::new();
-
-    for log in block.logs() {
-        // Handle individual MemberAdded events
-        if let Some(member_added) = MemberAddedEvent::match_and_decode(log) {
-            members.push(MemberAdded {
-                change_type: "added".to_string(),
-                main_voting_plugin_address: format_hex(&log.address()),
-                member_address: format_hex(&member_added.member),
-                dao_address: format_hex(&member_added.dao),
-            });
-        }
-        // Handle batch MembersAdded events
-        else if let Some(members_added) = MembersAddedEvent::match_and_decode(log) {
-            for member in members_added.members {
-                members.push(MemberAdded {
+    let members: Vec<MemberAdded> = block
+        .logs()
+        .flat_map(|log| {
+            // Handle individual MemberAdded events
+            if let Some(member_added) = MemberAddedEvent::match_and_decode(log) {
+                return vec![MemberAdded {
                     change_type: "added".to_string(),
                     main_voting_plugin_address: format_hex(&log.address()),
-                    member_address: format_hex(&member),
-                    dao_address: format_hex(&members_added.dao),
-                });
+                    member_address: format_hex(&member_added.member),
+                    dao_address: format_hex(&member_added.dao),
+                }];
             }
-        }
-    }
+            // Handle batch MembersAdded events
+            else if let Some(members_added) = MembersAddedEvent::match_and_decode(log) {
+                return members_added
+                    .members
+                    .into_iter()
+                    .map(|member| MemberAdded {
+                        change_type: "added".to_string(),
+                        main_voting_plugin_address: format_hex(&log.address()),
+                        member_address: format_hex(&member),
+                        dao_address: format_hex(&members_added.dao),
+                    })
+                    .collect();
+            }
+            
+            vec![]
+        })
+        .collect();
 
     Ok(MembersAdded { members })
 }
