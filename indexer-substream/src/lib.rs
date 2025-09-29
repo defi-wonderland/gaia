@@ -39,12 +39,11 @@ use main_voting_plugin::events::{
     AddEditorProposalCreated as AddEditorProposalCreatedEvent, EditorAdded as EditorAddedEvent,
     EditorRemoved as EditorRemovedEvent, EditorsAdded as EditorsAddedEvent,
     MemberAdded as MemberAddedEvent, MemberRemoved as MemberRemovedEvent,
-    ProposalExecuted as ProposalExecutedEvent,
+    MembersAdded as MembersAddedEvent, ProposalExecuted as ProposalExecutedEvent,
     PublishEditsProposalCreated as PublishEditsProposalCreatedEvent,
     RemoveEditorProposalCreated as RemoveEditorProposalCreatedEvent,
     RemoveMemberProposalCreated as RemoveMemberProposalCreatedEvent,
     RemoveSubspaceProposalCreated as RemoveSubspaceProposalCreatedEvent,
-    MembersAdded as MembersAddedEvent,
 };
 use majority_voting_base_plugin::events::VoteCast as VoteCastEvent;
 use personal_admin_setup::events::GeoPersonalAdminPluginCreated as GeoPersonalAdminPluginCreatedEvent;
@@ -269,11 +268,11 @@ fn map_initial_editors_added(
 }
 
 /// Processes member addition events from blockchain logs.
-/// 
+///
 /// Handles both individual `MemberAdded(address, address)` and batch `MembersAdded(address[], address)` events.
 /// Extracted from [`map_members_added`] for unit testing purposes.
 #[substreams::handlers::map]
-fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {    
+fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {
     let members: Vec<MemberAdded> = block
         .logs()
         .flat_map(|log| {
@@ -299,7 +298,7 @@ fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::
                     })
                     .collect();
             }
-            
+
             vec![]
         })
         .collect();
