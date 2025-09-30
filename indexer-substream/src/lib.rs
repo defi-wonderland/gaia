@@ -9,7 +9,7 @@ use pb::schema::{
     EditPublished, EditorAdded, EditorRemoved, EditorsAdded, EditorsRemoved, EditsPublished,
     GeoGovernancePluginCreated, GeoGovernancePluginsCreated, GeoOutput,
     GeoPersonalSpaceAdminPluginCreated, GeoPersonalSpaceAdminPluginsCreated, GeoSpaceCreated,
-    GeoSpacesCreated, InitialEditorAdded, InitialEditorsAdded, MemberAdded, MemberRemoved,
+    GeoSpacesCreated, MemberAdded, MemberRemoved,
     MembersAdded, MembersRemoved, ProposalExecuted, ProposalsExecuted, PublishEditProposalCreated,
     PublishEditsProposalsCreated, RemoveEditorProposalCreated, RemoveEditorProposalsCreated,
     RemoveMemberProposalCreated, RemoveMemberProposalsCreated, RemoveSubspaceProposalCreated,
@@ -222,49 +222,6 @@ fn map_personal_admin_plugins_created(
         .collect();
 
     Ok(GeoPersonalSpaceAdminPluginsCreated { plugins })
-}
-
-/**
- * An editor has editing and voting permissions in a DAO-based space. Editors join a space
- * one of two ways:
- * 1. They submit a request to join the space as an editor which goes to a vote. The editors
- *    in the space vote on whether to accept the new editor.
- * 2. They are added as a set of initial editors when first creating the space. This allows
- *    space deployers to bootstrap a set of editors on space creation.
- *
- * @TODO: We can optimize the output a bit for downstream sinks by flattening the addresses
- * array. Right now in the substream output we get:
- *
- * editors: [
- *   { addresses: [...] },
- * ].
- *
- * It would be nicer to just output a single array instead of a nested array.
- */
-#[substreams::handlers::map]
-fn map_initial_editors_added(
-    block: eth::v2::Block,
-) -> Result<InitialEditorsAdded, substreams::errors::Error> {
-    let editors: Vec<InitialEditorAdded> = block
-        .logs()
-        .filter_map(|log| {
-            if let Some(editors_added) = EditorsAddedEvent::match_and_decode(log) {
-                return Some(InitialEditorAdded {
-                    addresses: editors_added
-                        .editors // contract event calls them members, but conceptually they are editors
-                        .iter()
-                        .map(|address| format_hex(address))
-                        .collect(),
-                    plugin_address: format_hex(&log.address()),
-                    dao_address: format_hex(&editors_added.dao),
-                });
-            }
-
-            return None;
-        })
-        .collect();
-
-    Ok(InitialEditorsAdded { editors })
 }
 
 #[substreams::handlers::map]
@@ -703,7 +660,6 @@ fn map_remove_subspace_proposals_created(
 fn geo_out(
     spaces_created: GeoSpacesCreated,
     governance_plugins_created: GeoGovernancePluginsCreated,
-    initial_editors_added: InitialEditorsAdded,
     votes_cast: VotesCast,
     edits_published: EditsPublished,
     successor_spaces_created: SuccessorSpacesCreated,
@@ -725,7 +681,6 @@ fn geo_out(
 ) -> Result<GeoOutput, substreams::errors::Error> {
     let spaces_created = spaces_created.spaces;
     let governance_plugins_created = governance_plugins_created.plugins;
-    let initial_editors_added = initial_editors_added.editors;
     let votes_cast = votes_cast.votes;
     let edits_published = edits_published.edits;
     let successor_spaces_created = successor_spaces_created.spaces;
@@ -742,7 +697,6 @@ fn geo_out(
     Ok(GeoOutput {
         spaces_created,
         governance_plugins_created,
-        initial_editors_added,
         votes_cast,
         edits_published,
         successor_spaces_created,

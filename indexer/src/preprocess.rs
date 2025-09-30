@@ -253,12 +253,7 @@ pub async fn preprocess_block_scoped_data(
         &geo.personal_plugins_created,
     );
 
-    let mut added_editors = map_editors_added(&geo.editors_added);
-
-    // Merge initial editors into added_editors
-    let initial_editors = map_initial_editors_added(&geo.initial_editors_added);
-    added_editors.extend(initial_editors.clone());
-
+    let added_editors = map_editors_added(&geo.editors_added);
     let mut added_members = map_members_added(&geo.members_added);
 
     // If any added editors come from a space created at the same time, add
