@@ -763,3 +763,159 @@ fn geo_out(
         proposed_removed_subspaces: proposed_removed_subspaces.proposed_subspaces,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use substreams_ethereum::pb::eth::v2::{Block, BlockHeader, TransactionTrace, TransactionReceipt, Log};
+    use prost_types::Timestamp;
+
+    /// Helper function to create a mock Block with given logs
+    fn create_mock_block_with_logs(logs: Vec<Log>) -> Block {
+        let block_header = BlockHeader {
+            timestamp: Some(Timestamp {
+                seconds: 1650000000,
+                nanos: 0,
+            }),
+            number: 12345,
+            ..Default::default()
+        };
+
+        let transaction_receipt = TransactionReceipt {
+            logs,
+            ..Default::default()
+        };
+
+        let transaction_trace = TransactionTrace {
+            hash: vec![0x12; 32],
+            from: vec![0xab; 20],
+            receipt: Some(transaction_receipt),
+            status: 1,
+            ..Default::default()
+        };
+
+        Block {
+            number: 12345,
+            hash: vec![0x12; 32],
+            header: Some(block_header),
+            transaction_traces: vec![transaction_trace],
+            ..Default::default()
+        }
+    }
+
+    /// Creates a properly ABI-encoded EditorAdded event log
+    fn create_editor_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, editor_address: Vec<u8>) -> Log {
+        // keccak256(EditorAdded(address,address))
+        let event_signature = hex::decode("9be2e3a904f17483f2325179628b7c166e45f79cc1dd501e98c8dea6f4437aca").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&editor_address);
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    /// Creates a properly ABI-encoded EditorsAdded event log
+    fn create_editors_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, editor_addresses: Vec<Vec<u8>>) -> Log {
+        // keccak256(EditorsAdded(address,address[]))
+        let event_signature = hex::decode("cbbd9049ad05566af71c386d03a5b5319c7ae2fdf47ef939238017b7e385440f").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(0x40);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(editor_addresses.len() as u8);
+        
+        for editor_address in &editor_addresses {
+            data.extend(vec![0u8; 12]);
+            data.extend(editor_address);
+        }
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    #[test]
+    fn test_map_editors_added_single_editor() {
+        // Given: A block with a single EditorAdded event
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let editor_address = vec![0x33; 20];
+        
+        let log = create_editor_added_log(plugin_address.clone(), dao_address.clone(), editor_address.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+        println!("result: {:?}", result);
+
+        // Expect: One editor added
+        assert_eq!(result.editors.len(), 1);
+        let editor = &result.editors[0];
+        assert_eq!(editor.change_type, "added");
+        assert_eq!(editor.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor.editor_address, format_hex(&editor_address));
+        assert_eq!(editor.dao_address, format_hex(&dao_address));
+    }
+
+    #[test]
+    fn test_map_editors_added_multiple_editors() {
+        // Given: A block with multiple EditorAdded events
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let editor_addresses = vec![vec![0x33; 20], vec![0x44; 20]];
+
+        let log = create_editors_added_log(plugin_address.clone(), dao_address.clone(), editor_addresses.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+
+        // Expect: Multiple editors added
+        assert_eq!(result.editors.len(), 2);
+        let editor1 = &result.editors[0];
+        let editor2 = &result.editors[1];
+        assert_eq!(editor1.change_type, "added");
+        assert_eq!(editor1.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor1.editor_address, format_hex(&editor_addresses[0]));
+        assert_eq!(editor1.dao_address, format_hex(&dao_address));
+        assert_eq!(editor2.change_type, "added");
+        assert_eq!(editor2.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor2.editor_address, format_hex(&editor_addresses[1]));
+        assert_eq!(editor2.dao_address, format_hex(&dao_address));
+    }
+
+    #[test]
+    fn test_map_editors_added_empty() {
+        // Given: A block with no EditorAdded events
+        let block = create_mock_block_with_logs(vec![]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+
+        // Expect: No editors added
+        assert_eq!(result.editors.len(), 0);
+    }
+}
