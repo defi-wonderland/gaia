@@ -311,19 +311,37 @@ fn map_members_removed(block: eth::v2::Block) -> Result<MembersRemoved, substrea
 
 #[substreams::handlers::map]
 fn map_editors_added(block: eth::v2::Block) -> Result<EditorsAdded, substreams::errors::Error> {
+    _map_editors_added(block)
+}
+
+fn _map_editors_added(block: eth::v2::Block) -> Result<EditorsAdded, substreams::errors::Error> {
     let editors: Vec<EditorAdded> = block
         .logs()
-        .filter_map(|log| {
-            if let Some(members_approved) = EditorAddedEvent::match_and_decode(log) {
-                return Some(EditorAdded {
+        .flat_map(|log| {
+            // Handle individual EditorAdded events
+            if let Some(editor_added) = EditorAddedEvent::match_and_decode(log) {
+                return vec![EditorAdded {
                     change_type: "added".to_string(),
                     main_voting_plugin_address: format_hex(&log.address()),
-                    editor_address: format_hex(&members_approved.editor),
-                    dao_address: format_hex(&members_approved.dao),
-                });
+                    editor_address: format_hex(&editor_added.editor),
+                    dao_address: format_hex(&editor_added.dao),
+                }];
+            }
+            // Handle batch EditorsAdded events
+            else if let Some(editors_added) = EditorsAddedEvent::match_and_decode(log) {
+                return editors_added
+                    .editors
+                    .into_iter()
+                    .map(|editor| EditorAdded {
+                        change_type: "added".to_string(),
+                        main_voting_plugin_address: format_hex(&log.address()),
+                        editor_address: format_hex(&editor),
+                        dao_address: format_hex(&editors_added.dao),
+                    })
+                    .collect();
             }
 
-            return None;
+            vec![]
         })
         .collect();
 
