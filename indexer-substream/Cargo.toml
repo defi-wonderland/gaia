@@ -19,7 +19,7 @@ serde = { version = "1.0.180", features = ["derive"] }
 num-bigint = "0.4.4"
 
 [dev-dependencies]
-hex = "0.4.3"
+hex = "0.4"
 
 [profile.release]
 lto = true

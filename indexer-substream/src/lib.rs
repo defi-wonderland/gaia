@@ -39,7 +39,7 @@ use main_voting_plugin::events::{
     AddEditorProposalCreated as AddEditorProposalCreatedEvent, EditorAdded as EditorAddedEvent,
     EditorRemoved as EditorRemovedEvent, EditorsAdded as EditorsAddedEvent,
     MemberAdded as MemberAddedEvent, MemberRemoved as MemberRemovedEvent,
-    ProposalExecuted as ProposalExecutedEvent,
+    MembersAdded as MembersAddedEvent, ProposalExecuted as ProposalExecutedEvent,
     PublishEditsProposalCreated as PublishEditsProposalCreatedEvent,
     RemoveEditorProposalCreated as RemoveEditorProposalCreatedEvent,
     RemoveMemberProposalCreated as RemoveMemberProposalCreatedEvent,
@@ -226,19 +226,37 @@ fn map_personal_admin_plugins_created(
 
 #[substreams::handlers::map]
 fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {
+    _map_members_added(block)
+}
+
+fn _map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {
     let members: Vec<MemberAdded> = block
         .logs()
-        .filter_map(|log| {
-            if let Some(members_approved) = MemberAddedEvent::match_and_decode(log) {
-                return Some(MemberAdded {
+        .flat_map(|log| {
+            // Handle individual MemberAdded events
+            if let Some(member_added) = MemberAddedEvent::match_and_decode(log) {
+                return vec![MemberAdded {
                     change_type: "added".to_string(),
                     main_voting_plugin_address: format_hex(&log.address()),
-                    member_address: format_hex(&members_approved.member),
-                    dao_address: format_hex(&members_approved.dao),
-                });
+                    member_address: format_hex(&member_added.member),
+                    dao_address: format_hex(&member_added.dao),
+                }];
+            }
+            // Handle batch MembersAdded events
+            else if let Some(members_added) = MembersAddedEvent::match_and_decode(log) {
+                return members_added
+                    .members
+                    .into_iter()
+                    .map(|member| MemberAdded {
+                        change_type: "added".to_string(),
+                        main_voting_plugin_address: format_hex(&log.address()),
+                        member_address: format_hex(&member),
+                        dao_address: format_hex(&members_added.dao),
+                    })
+                    .collect();
             }
 
-            return None;
+            vec![]
         })
         .collect();
 
@@ -755,6 +773,254 @@ mod tests {
             transaction_traces: vec![transaction_trace],
             ..Default::default()
         }
+    }
+
+    /// Creates a properly ABI-encoded MemberAdded event log
+    fn create_member_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, member_address: Vec<u8>) -> Log {
+        // keccak256(MemberAdded(address,address))
+        let event_signature = hex::decode("6a2af11b2d73f347f9d5840aea46899e17609730b5cd91bd9c312098038acba6").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&member_address);
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    /// Creates a properly ABI-encoded MembersAdded event log
+    fn create_members_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, member_addresses: Vec<Vec<u8>>) -> Log {
+        // keccak256(MembersAdded(address,address[]))
+        let event_signature = hex::decode("54f947227a98368ad184c035b39c0ee812a8a4777c500a475c985cef0e2de65c").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(0x40);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(member_addresses.len() as u8);
+        
+        for member_address in &member_addresses {
+            data.extend(vec![0u8; 12]);
+            data.extend(member_address);
+        }
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    #[test]
+    fn test_map_members_added_single_member() {
+        // Given: A block with a single MemberAdded event
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let member_address = vec![0x33; 20];
+        
+        let log = create_member_added_log(plugin_address.clone(), dao_address.clone(), member_address.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: One member added
+        assert_eq!(result.members.len(), 1);
+        let member = &result.members[0];
+        assert_eq!(member.change_type, "added");
+        assert_eq!(member.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(member.member_address, format_hex(&member_address));
+        assert_eq!(member.dao_address, format_hex(&dao_address));
+    }
+
+    #[test]
+    fn test_map_members_added_batch_members() {
+        // Given: A block with a single MembersAdded event containing multiple members
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let member_addresses = vec![
+            vec![0x33; 20],
+            vec![0x44; 20],
+            vec![0x55; 20],
+        ];
+        
+        let log = create_members_added_log(plugin_address.clone(), dao_address.clone(), member_addresses.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: Three members added
+        assert_eq!(result.members.len(), 3);
+        
+        for (i, member) in result.members.iter().enumerate() {
+            assert_eq!(member.change_type, "added");
+            assert_eq!(member.main_voting_plugin_address, format_hex(&plugin_address));
+            assert_eq!(member.member_address, format_hex(&member_addresses[i]));
+            assert_eq!(member.dao_address, format_hex(&dao_address));
+        }
+    }
+
+    #[test]
+    fn test_map_members_added_mixed_events() {
+        // Given: A block with both MemberAdded and MembersAdded events
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        
+        let single_member = vec![0x33; 20];
+        let single_log = create_member_added_log(plugin_address.clone(), dao_address.clone(), single_member.clone());
+        
+        let batch_members = vec![vec![0x44; 20], vec![0x55; 20]];
+        let batch_log = create_members_added_log(plugin_address.clone(), dao_address.clone(), batch_members.clone());
+        
+        let block = create_mock_block_with_logs(vec![single_log, batch_log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: Three members added total (1 from single + 2 from batch)
+        assert_eq!(result.members.len(), 3);
+        
+        assert_eq!(result.members[0].member_address, format_hex(&single_member));
+        assert_eq!(result.members[1].member_address, format_hex(&batch_members[0]));
+        assert_eq!(result.members[2].member_address, format_hex(&batch_members[1]));
+    }
+
+    #[test]
+    fn test_map_members_added_empty_block() {
+        // Given: An empty block with no logs
+        let block = create_mock_block_with_logs(vec![]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: No members added
+        assert_eq!(result.members.len(), 0);
+    }
+
+    #[test]
+    fn test_map_members_added_unrecognized_events() {
+        // Given: A block with logs that don't match our event signatures
+        let unrecognized_log = Log {
+            address: vec![0x11; 20],
+            data: vec![0x12, 0x34, 0x56, 0x78],
+            topics: vec![vec![0x00; 32]],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        };
+        let block = create_mock_block_with_logs(vec![unrecognized_log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: No members added
+        assert_eq!(result.members.len(), 0);
+    }
+
+    #[test]
+    fn test_map_members_added_empty_batch() {
+        // Given: A block with a MembersAdded event containing no members
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let empty_members: Vec<Vec<u8>> = vec![];
+        
+        let log = create_members_added_log(plugin_address, dao_address, empty_members);
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: No members added
+        assert_eq!(result.members.len(), 0);
+    }
+
+    #[test]
+    fn test_map_members_added_different_daos() {
+        // Given: A block with member events from different DAOs
+        let plugin_address = vec![0x11; 20];
+        let dao1_address = vec![0x22; 20];
+        let dao2_address = vec![0x77; 20];
+        let member1_address = vec![0x33; 20];
+        let member2_address = vec![0x44; 20];
+        
+        let log1 = create_member_added_log(plugin_address.clone(), dao1_address.clone(), member1_address.clone());
+        let log2 = create_member_added_log(plugin_address.clone(), dao2_address.clone(), member2_address.clone());
+        let block = create_mock_block_with_logs(vec![log1, log2]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: Two members added with correct DAO addresses
+        assert_eq!(result.members.len(), 2);
+        assert_eq!(result.members[0].dao_address, format_hex(&dao1_address));
+        assert_eq!(result.members[1].dao_address, format_hex(&dao2_address));
+    }
+
+    #[test]
+    fn test_map_members_added_large_batch() {
+        // Given: A block with a MembersAdded event containing many members
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let member_addresses: Vec<Vec<u8>> = (0..10)
+            .map(|i| vec![i as u8; 20])
+            .collect();
+        
+        let log = create_members_added_log(plugin_address.clone(), dao_address.clone(), member_addresses.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: All 10 members added
+        assert_eq!(result.members.len(), 10);
+        
+        for (i, member) in result.members.iter().enumerate() {
+            assert_eq!(member.change_type, "added");
+            assert_eq!(member.main_voting_plugin_address, format_hex(&plugin_address));
+            assert_eq!(member.member_address, format_hex(&member_addresses[i]));
+            assert_eq!(member.dao_address, format_hex(&dao_address));
+        }
+    }
+
+    #[test]
+    fn test_map_members_added_multiple_contracts() {
+        // Given: A block with member events from different plugin contracts
+        let plugin1_address = vec![0x11; 20];
+        let plugin2_address = vec![0x88; 20];
+        let dao_address = vec![0x22; 20];
+        let member1_address = vec![0x33; 20];
+        let member2_address = vec![0x44; 20];
+        
+        let log1 = create_member_added_log(plugin1_address.clone(), dao_address.clone(), member1_address.clone());
+        let log2 = create_member_added_log(plugin2_address.clone(), dao_address.clone(), member2_address.clone());
+        let block = create_mock_block_with_logs(vec![log1, log2]);
+
+        // When: Processing the block
+        let result = _map_members_added(block).expect("Failed to process block");
+
+        // Expect: Two members added with correct plugin addresses
+        assert_eq!(result.members.len(), 2);
+        assert_eq!(result.members[0].main_voting_plugin_address, format_hex(&plugin1_address));
+        assert_eq!(result.members[1].main_voting_plugin_address, format_hex(&plugin2_address));
     }
 
     /// Creates a properly ABI-encoded EditorAdded event log
