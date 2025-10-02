@@ -209,7 +209,6 @@ fn map_personal_admin_plugins_created(
                 GeoPersonalAdminPluginCreatedEvent::match_and_decode(log)
             {
                 return Some(GeoPersonalSpaceAdminPluginCreated {
-                    initial_editor: format_hex(&personal_space_created.initial_editor),
                     dao_address: format_hex(&personal_space_created.dao),
                     personal_admin_address: (format_hex(
                         &personal_space_created.personal_admin_plugin,
