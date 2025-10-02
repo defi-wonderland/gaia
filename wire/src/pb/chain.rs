@@ -76,8 +76,6 @@ pub struct GeoPersonalSpaceAdminPluginCreated {
     pub dao_address: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub personal_admin_address: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub initial_editor: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -76,8 +76,6 @@ pub struct GeoPersonalSpaceAdminPluginCreated {
     pub dao_address: ::prost::alloc::string::String,
     #[prost(string, tag="2")]
     pub personal_admin_address: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub initial_editor: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
