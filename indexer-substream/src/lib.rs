@@ -9,7 +9,7 @@ use pb::schema::{
     EditPublished, EditorAdded, EditorRemoved, EditorsAdded, EditorsRemoved, EditsPublished,
     GeoGovernancePluginCreated, GeoGovernancePluginsCreated, GeoOutput,
     GeoPersonalSpaceAdminPluginCreated, GeoPersonalSpaceAdminPluginsCreated, GeoSpaceCreated,
-    GeoSpacesCreated, InitialEditorAdded, InitialEditorsAdded, MemberAdded, MemberRemoved,
+    GeoSpacesCreated, MemberAdded, MemberRemoved,
     MembersAdded, MembersRemoved, ProposalExecuted, ProposalsExecuted, PublishEditProposalCreated,
     PublishEditsProposalsCreated, RemoveEditorProposalCreated, RemoveEditorProposalsCreated,
     RemoveMemberProposalCreated, RemoveMemberProposalsCreated, RemoveSubspaceProposalCreated,
@@ -224,52 +224,6 @@ fn map_personal_admin_plugins_created(
     Ok(GeoPersonalSpaceAdminPluginsCreated { plugins })
 }
 
-/**
- * An editor has editing and voting permissions in a DAO-based space. Editors join a space
- * one of two ways:
- * 1. They submit a request to join the space as an editor which goes to a vote. The editors
- *    in the space vote on whether to accept the new editor.
- * 2. They are added as a set of initial editors when first creating the space. This allows
- *    space deployers to bootstrap a set of editors on space creation.
- *
- * @TODO: We can optimize the output a bit for downstream sinks by flattening the addresses
- * array. Right now in the substream output we get:
- *
- * editors: [
- *   { addresses: [...] },
- * ].
- *
- * It would be nicer to just output a single array instead of a nested array.
- */
-#[substreams::handlers::map]
-fn map_initial_editors_added(
-    block: eth::v2::Block,
-) -> Result<InitialEditorsAdded, substreams::errors::Error> {
-    let editors: Vec<InitialEditorAdded> = block
-        .logs()
-        .filter_map(|log| {
-            if let Some(editors_added) = EditorsAddedEvent::match_and_decode(log) {
-                return Some(InitialEditorAdded {
-                    addresses: editors_added
-                        .editors // contract event calls them members, but conceptually they are editors
-                        .iter()
-                        .map(|address| format_hex(address))
-                        .collect(),
-                    plugin_address: format_hex(&log.address()),
-                    dao_address: format_hex(&editors_added.dao),
-                });
-            }
-
-            return None;
-        })
-        .collect();
-
-    Ok(InitialEditorsAdded { editors })
-}
-
-/// Processes member addition events from blockchain logs.
-///
-/// Handles both individual `MemberAdded(address, address)` and batch `MembersAdded(address[], address)` events.
 #[substreams::handlers::map]
 fn map_members_added(block: eth::v2::Block) -> Result<MembersAdded, substreams::errors::Error> {
     _map_members_added(block)
@@ -332,19 +286,37 @@ fn map_members_removed(block: eth::v2::Block) -> Result<MembersRemoved, substrea
 
 #[substreams::handlers::map]
 fn map_editors_added(block: eth::v2::Block) -> Result<EditorsAdded, substreams::errors::Error> {
+    _map_editors_added(block)
+}
+
+fn _map_editors_added(block: eth::v2::Block) -> Result<EditorsAdded, substreams::errors::Error> {
     let editors: Vec<EditorAdded> = block
         .logs()
-        .filter_map(|log| {
-            if let Some(members_approved) = EditorAddedEvent::match_and_decode(log) {
-                return Some(EditorAdded {
+        .flat_map(|log| {
+            // Handle individual EditorAdded events
+            if let Some(editor_added) = EditorAddedEvent::match_and_decode(log) {
+                return vec![EditorAdded {
                     change_type: "added".to_string(),
                     main_voting_plugin_address: format_hex(&log.address()),
-                    editor_address: format_hex(&members_approved.editor),
-                    dao_address: format_hex(&members_approved.dao),
-                });
+                    editor_address: format_hex(&editor_added.editor),
+                    dao_address: format_hex(&editor_added.dao),
+                }];
+            }
+            // Handle batch EditorsAdded events
+            else if let Some(editors_added) = EditorsAddedEvent::match_and_decode(log) {
+                return editors_added
+                    .editors
+                    .into_iter()
+                    .map(|editor| EditorAdded {
+                        change_type: "added".to_string(),
+                        main_voting_plugin_address: format_hex(&log.address()),
+                        editor_address: format_hex(&editor),
+                        dao_address: format_hex(&editors_added.dao),
+                    })
+                    .collect();
             }
 
-            return None;
+            vec![]
         })
         .collect();
 
@@ -706,7 +678,6 @@ fn map_remove_subspace_proposals_created(
 fn geo_out(
     spaces_created: GeoSpacesCreated,
     governance_plugins_created: GeoGovernancePluginsCreated,
-    initial_editors_added: InitialEditorsAdded,
     votes_cast: VotesCast,
     edits_published: EditsPublished,
     successor_spaces_created: SuccessorSpacesCreated,
@@ -728,7 +699,6 @@ fn geo_out(
 ) -> Result<GeoOutput, substreams::errors::Error> {
     let spaces_created = spaces_created.spaces;
     let governance_plugins_created = governance_plugins_created.plugins;
-    let initial_editors_added = initial_editors_added.editors;
     let votes_cast = votes_cast.votes;
     let edits_published = edits_published.edits;
     let successor_spaces_created = successor_spaces_created.spaces;
@@ -745,7 +715,6 @@ fn geo_out(
     Ok(GeoOutput {
         spaces_created,
         governance_plugins_created,
-        initial_editors_added,
         votes_cast,
         edits_published,
         successor_spaces_created,
@@ -1052,5 +1021,121 @@ mod tests {
         assert_eq!(result.members.len(), 2);
         assert_eq!(result.members[0].main_voting_plugin_address, format_hex(&plugin1_address));
         assert_eq!(result.members[1].main_voting_plugin_address, format_hex(&plugin2_address));
+    }
+
+    /// Creates a properly ABI-encoded EditorAdded event log
+    fn create_editor_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, editor_address: Vec<u8>) -> Log {
+        // keccak256(EditorAdded(address,address))
+        let event_signature = hex::decode("9be2e3a904f17483f2325179628b7c166e45f79cc1dd501e98c8dea6f4437aca").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&editor_address);
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    /// Creates a properly ABI-encoded EditorsAdded event log
+    fn create_editors_added_log(plugin_address: Vec<u8>, dao_address: Vec<u8>, editor_addresses: Vec<Vec<u8>>) -> Log {
+        // keccak256(EditorsAdded(address,address[]))
+        let event_signature = hex::decode("cbbd9049ad05566af71c386d03a5b5319c7ae2fdf47ef939238017b7e385440f").unwrap();
+
+        let mut data = Vec::new();
+        
+        data.extend(vec![0u8; 12]);
+        data.extend(&dao_address);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(0x40);
+        
+        data.extend(vec![0u8; 31]);
+        data.push(editor_addresses.len() as u8);
+        
+        for editor_address in &editor_addresses {
+            data.extend(vec![0u8; 12]);
+            data.extend(editor_address);
+        }
+
+        Log {
+            address: plugin_address,
+            data,
+            topics: vec![event_signature],
+            index: 0,
+            block_index: 0,
+            ordinal: 0,
+        }
+    }
+
+    #[test]
+    fn test_map_editors_added_single_editor() {
+        // Given: A block with a single EditorAdded event
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let editor_address = vec![0x33; 20];
+        
+        let log = create_editor_added_log(plugin_address.clone(), dao_address.clone(), editor_address.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+        println!("result: {:?}", result);
+
+        // Expect: One editor added
+        assert_eq!(result.editors.len(), 1);
+        let editor = &result.editors[0];
+        assert_eq!(editor.change_type, "added");
+        assert_eq!(editor.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor.editor_address, format_hex(&editor_address));
+        assert_eq!(editor.dao_address, format_hex(&dao_address));
+    }
+
+    #[test]
+    fn test_map_editors_added_multiple_editors() {
+        // Given: A block with multiple EditorAdded events
+        let plugin_address = vec![0x11; 20];
+        let dao_address = vec![0x22; 20];
+        let editor_addresses = vec![vec![0x33; 20], vec![0x44; 20]];
+
+        let log = create_editors_added_log(plugin_address.clone(), dao_address.clone(), editor_addresses.clone());
+        let block = create_mock_block_with_logs(vec![log]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+
+        // Expect: Multiple editors added
+        assert_eq!(result.editors.len(), 2);
+        let editor1 = &result.editors[0];
+        let editor2 = &result.editors[1];
+        assert_eq!(editor1.change_type, "added");
+        assert_eq!(editor1.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor1.editor_address, format_hex(&editor_addresses[0]));
+        assert_eq!(editor1.dao_address, format_hex(&dao_address));
+        assert_eq!(editor2.change_type, "added");
+        assert_eq!(editor2.main_voting_plugin_address, format_hex(&plugin_address));
+        assert_eq!(editor2.editor_address, format_hex(&editor_addresses[1]));
+        assert_eq!(editor2.dao_address, format_hex(&dao_address));
+    }
+
+    #[test]
+    fn test_map_editors_added_empty() {
+        // Given: A block with no EditorAdded events
+        let block = create_mock_block_with_logs(vec![]);
+
+        // When: Processing the block
+        let result = _map_editors_added(block).expect("Failed to process block");
+
+        // Expect: No editors added
+        assert_eq!(result.editors.len(), 0);
     }
 }

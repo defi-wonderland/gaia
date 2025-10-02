@@ -85,41 +85,6 @@ pub struct GeoPersonalSpaceAdminPluginsCreated {
     #[prost(message, repeated, tag="1")]
     pub plugins: ::prost::alloc::vec::Vec<GeoPersonalSpaceAdminPluginCreated>,
 }
-/// *
-/// This event represents adding editors to a DAO-based space
-///
-/// The data model for DAO-based spaces works slightly differently than in legacy spaces.
-/// This means there will be a period where we need to support both data models depending
-/// on which space/contract we are working with. Eventually these data models will be merged
-/// and usage of the legacy space contracts will be migrated to the DAO-based contracts, but
-/// for now we are appending "V2" to permissions data models to denote it's used for the
-/// DAO-based spaces.
-///
-/// An editor has editing and voting permissions in a DAO-based space. Editors join a space
-/// one of two ways:
-/// 1. They submit a request to join the space as an editor which goes to a vote. The editors
-///     in the space vote on whether to accept the new editor.
-/// 2. They are added as a set of initial editors when first creating the space. This allows
-///     space deployers to bootstrap a set of editors on space creation.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct InitialEditorAdded {
-    /// The event emits an array of addresses. We only emit multiple addresses
-    /// when first creating the governance plugin. After that we only emit one
-    /// address at a time via proposals.
-    #[prost(string, repeated, tag="1")]
-    pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, tag="2")]
-    pub plugin_address: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub dao_address: ::prost::alloc::string::String,
-}
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct InitialEditorsAdded {
-    #[prost(message, repeated, tag="1")]
-    pub editors: ::prost::alloc::vec::Vec<InitialEditorAdded>,
-}
 /// Executed proposals have been approved and executed onchain in a DAO-based
 /// space's main voting plugin. The DAO itself also emits the executed event,
 /// but the ABI/interface is different. We really only care about the one
@@ -485,8 +450,6 @@ pub struct GeoOutput {
     pub spaces_created: ::prost::alloc::vec::Vec<GeoSpaceCreated>,
     #[prost(message, repeated, tag="2")]
     pub governance_plugins_created: ::prost::alloc::vec::Vec<GeoGovernancePluginCreated>,
-    #[prost(message, repeated, tag="3")]
-    pub initial_editors_added: ::prost::alloc::vec::Vec<InitialEditorAdded>,
     #[prost(message, repeated, tag="4")]
     pub votes_cast: ::prost::alloc::vec::Vec<VoteCast>,
     #[prost(message, repeated, tag="5")]
