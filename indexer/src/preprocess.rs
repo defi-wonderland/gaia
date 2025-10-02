@@ -332,12 +332,10 @@ mod tests {
     fn create_test_personal_plugin(
         dao_address: &str,
         personal_admin_address: &str,
-        initial_editor: &str,
     ) -> GeoPersonalSpaceAdminPluginCreated {
         GeoPersonalSpaceAdminPluginCreated {
             dao_address: dao_address.to_string(),
             personal_admin_address: personal_admin_address.to_string(),
-            initial_editor: initial_editor.to_string(),
         }
     }
 
@@ -424,7 +422,7 @@ mod tests {
     fn test_match_personal_space() {
         let spaces = vec![create_test_space("dao2", "space2")];
         let governance_plugins = vec![];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -443,7 +441,7 @@ mod tests {
     fn test_space_with_no_matching_plugin() {
         let spaces = vec![create_test_space("dao3", "space3")];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -458,7 +456,7 @@ mod tests {
             create_test_space("dao3", "space3"), // No matching plugin
         ];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -488,7 +486,7 @@ mod tests {
         // If both types of plugins exist for the same DAO, governance plugin should take precedence
         let spaces = vec![create_test_space("dao1", "space1")];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao1", "admin1", "editor1")];
+        let personal_plugins = vec![create_test_personal_plugin("dao1", "admin1")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -723,7 +721,7 @@ mod tests {
 
         // Create matching plugins for the spaces
         let governance_plugins = vec![create_test_governance_plugin("dao1", "member1", "voting1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "initial2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         // Create editors for the same DAOs that have spaces created
         let editors = vec![
