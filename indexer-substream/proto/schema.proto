@@ -61,7 +61,6 @@ message GeoGovernancePluginsCreated {
 message GeoPersonalSpaceAdminPluginCreated {
   string dao_address = 1;
   string personal_admin_address = 2;
-  string initial_editor = 3;
 }
 
 message GeoPersonalSpaceAdminPluginsCreated {
