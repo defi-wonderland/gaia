@@ -1088,7 +1088,6 @@ mod tests {
 
         // When: Processing the block
         let result = _map_editors_added(block).expect("Failed to process block");
-        println!("result: {:?}", result);
 
         // Expect: One editor added
         assert_eq!(result.editors.len(), 1);
