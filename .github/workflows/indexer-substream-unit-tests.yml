@@ -1,0 +1,45 @@
+name: Indexer Substream Unit Tests
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'indexer-substream/**'
+      - '.github/workflows/indexer-substream-unit-tests.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'indexer-substream/**'
+      - '.github/workflows/indexer-substream-unit-tests.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          indexer-substream/target
+        key: ${{ runner.os }}-indexer-substream-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-indexer-substream-cargo-
+
+    - name: Run unit tests
+      run: cargo test --lib --bins
+      working-directory: ./indexer-substream
+      env:
+        RUST_BACKTRACE: 1

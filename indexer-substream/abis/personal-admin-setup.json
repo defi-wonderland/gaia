@@ -5,17 +5,6 @@
     "type": "constructor"
   },
   {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "editor",
-        "type": "address"
-      }
-    ],
-    "name": "EditorAddressInvalid",
-    "type": "error"
-  },
-  {
     "anonymous": false,
     "inputs": [
       {
@@ -28,12 +17,6 @@
         "indexed": false,
         "internalType": "address",
         "name": "personalAdminPlugin",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "initialEditor",
         "type": "address"
       }
     ],
@@ -51,9 +34,14 @@
     "name": "decodeInstallationParams",
     "outputs": [
       {
-        "internalType": "address",
-        "name": "initialEditor",
-        "type": "address"
+        "internalType": "address[]",
+        "name": "initialEditors",
+        "type": "address[]"
+      },
+      {
+        "internalType": "address[]",
+        "name": "initialMembers",
+        "type": "address[]"
       }
     ],
     "stateMutability": "pure",
@@ -62,9 +50,14 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "_initialEditor",
-        "type": "address"
+        "internalType": "address[]",
+        "name": "_initialEditors",
+        "type": "address[]"
+      },
+      {
+        "internalType": "address[]",
+        "name": "_initialMembers",
+        "type": "address[]"
       }
     ],
     "name": "encodeInstallationParams",

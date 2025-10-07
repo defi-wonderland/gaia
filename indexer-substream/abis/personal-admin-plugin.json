@@ -186,6 +186,25 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "address",
+        "name": "dao",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address[]",
+        "name": "members",
+        "type": "address[]"
+      }
+    ],
+    "name": "MembersAdded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "uint256",
         "name": "proposalId",
@@ -322,9 +341,14 @@
         "type": "address"
       },
       {
-        "internalType": "address",
-        "name": "_initialEditor",
-        "type": "address"
+        "internalType": "address[]",
+        "name": "_initialEditors",
+        "type": "address[]"
+      },
+      {
+        "internalType": "address[]",
+        "name": "_initialMembers",
+        "type": "address[]"
       }
     ],
     "name": "initialize",

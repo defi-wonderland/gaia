@@ -86,21 +86,6 @@ pub fn map_editors_added(editors: &[wire::pb::chain::EditorAdded]) -> Vec<AddedM
         .collect()
 }
 
-/// Maps initial editor events to AddedMember structs, flattening multiple addresses per event
-pub fn map_initial_editors_added(
-    initial_editors: &[wire::pb::chain::InitialEditorAdded],
-) -> Vec<AddedMember> {
-    initial_editors
-        .iter()
-        .flat_map(|e| {
-            e.addresses.iter().map(|address| AddedMember {
-                dao_address: e.dao_address.clone(),
-                editor_address: address.clone(),
-            })
-        })
-        .collect()
-}
-
 /// Maps member events to AddedMember structs
 pub fn map_members_added(members: &[wire::pb::chain::MemberAdded]) -> Vec<AddedMember> {
     members
@@ -253,12 +238,7 @@ pub async fn preprocess_block_scoped_data(
         &geo.personal_plugins_created,
     );
 
-    let mut added_editors = map_editors_added(&geo.editors_added);
-
-    // Merge initial editors into added_editors
-    let initial_editors = map_initial_editors_added(&geo.initial_editors_added);
-    added_editors.extend(initial_editors.clone());
-
+    let added_editors = map_editors_added(&geo.editors_added);
     let mut added_members = map_members_added(&geo.members_added);
 
     // If any added editors come from a space created at the same time, add
@@ -337,12 +317,10 @@ mod tests {
     fn create_test_personal_plugin(
         dao_address: &str,
         personal_admin_address: &str,
-        initial_editor: &str,
     ) -> GeoPersonalSpaceAdminPluginCreated {
         GeoPersonalSpaceAdminPluginCreated {
             dao_address: dao_address.to_string(),
             personal_admin_address: personal_admin_address.to_string(),
-            initial_editor: initial_editor.to_string(),
         }
     }
 
@@ -355,17 +333,6 @@ mod tests {
             editor_address: editor_address.to_string(),
             main_voting_plugin_address: "voting_plugin".to_string(),
             change_type: "0".to_string(),
-        }
-    }
-
-    fn create_test_initial_editor_added(
-        dao_address: &str,
-        addresses: Vec<&str>,
-    ) -> wire::pb::chain::InitialEditorAdded {
-        wire::pb::chain::InitialEditorAdded {
-            dao_address: dao_address.to_string(),
-            addresses: addresses.into_iter().map(|s| s.to_string()).collect(),
-            plugin_address: "plugin".to_string(),
         }
     }
 
@@ -429,7 +396,7 @@ mod tests {
     fn test_match_personal_space() {
         let spaces = vec![create_test_space("dao2", "space2")];
         let governance_plugins = vec![];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -448,7 +415,7 @@ mod tests {
     fn test_space_with_no_matching_plugin() {
         let spaces = vec![create_test_space("dao3", "space3")];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -463,7 +430,7 @@ mod tests {
             create_test_space("dao3", "space3"), // No matching plugin
         ];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "editor2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -493,7 +460,7 @@ mod tests {
         // If both types of plugins exist for the same DAO, governance plugin should take precedence
         let spaces = vec![create_test_space("dao1", "space1")];
         let governance_plugins = vec![create_test_governance_plugin("dao1", "voting1", "member1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao1", "admin1", "editor1")];
+        let personal_plugins = vec![create_test_personal_plugin("dao1", "admin1")];
 
         let result = match_spaces_with_plugins(&spaces, &governance_plugins, &personal_plugins);
 
@@ -583,74 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn test_map_initial_editors_added_empty() {
-        let initial_editors = vec![];
-        let result = map_initial_editors_added(&initial_editors);
-        assert_eq!(result.len(), 0);
-    }
-
-    #[test]
-    fn test_map_initial_editors_added_single_event_single_address() {
-        let initial_editors = vec![create_test_initial_editor_added("dao1", vec!["editor1"])];
-        let result = map_initial_editors_added(&initial_editors);
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].dao_address, "dao1");
-        assert_eq!(result[0].editor_address, "editor1");
-    }
-
-    #[test]
-    fn test_map_initial_editors_added_single_event_multiple_addresses() {
-        let initial_editors = vec![create_test_initial_editor_added(
-            "dao1",
-            vec!["editor1", "editor2", "editor3"],
-        )];
-        let result = map_initial_editors_added(&initial_editors);
-
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0].dao_address, "dao1");
-        assert_eq!(result[0].editor_address, "editor1");
-        assert_eq!(result[1].dao_address, "dao1");
-        assert_eq!(result[1].editor_address, "editor2");
-        assert_eq!(result[2].dao_address, "dao1");
-        assert_eq!(result[2].editor_address, "editor3");
-    }
-
-    #[test]
-    fn test_map_initial_editors_added_multiple_events() {
-        let initial_editors = vec![
-            create_test_initial_editor_added("dao1", vec!["editor1", "editor2"]),
-            create_test_initial_editor_added("dao2", vec!["editor3"]),
-            create_test_initial_editor_added("dao1", vec!["editor4", "editor5", "editor6"]),
-        ];
-        let result = map_initial_editors_added(&initial_editors);
-
-        assert_eq!(result.len(), 6);
-        // First event - dao1 with 2 editors
-        assert_eq!(result[0].dao_address, "dao1");
-        assert_eq!(result[0].editor_address, "editor1");
-        assert_eq!(result[1].dao_address, "dao1");
-        assert_eq!(result[1].editor_address, "editor2");
-        // Second event - dao2 with 1 editor
-        assert_eq!(result[2].dao_address, "dao2");
-        assert_eq!(result[2].editor_address, "editor3");
-        // Third event - dao1 with 3 editors
-        assert_eq!(result[3].dao_address, "dao1");
-        assert_eq!(result[3].editor_address, "editor4");
-        assert_eq!(result[4].dao_address, "dao1");
-        assert_eq!(result[4].editor_address, "editor5");
-        assert_eq!(result[5].dao_address, "dao1");
-        assert_eq!(result[5].editor_address, "editor6");
-    }
-
-    #[test]
-    fn test_map_initial_editors_added_empty_addresses() {
-        let initial_editors = vec![create_test_initial_editor_added("dao1", vec![])];
-        let result = map_initial_editors_added(&initial_editors);
-        assert_eq!(result.len(), 0);
-    }
-
-    #[test]
     fn test_map_members_added_empty() {
         let members = vec![];
         let result = map_members_added(&members);
@@ -686,39 +585,6 @@ mod tests {
     }
 
     #[test]
-    fn test_combined_editor_mapping_workflow() {
-        // Test the typical workflow of combining regular and initial editors
-        let editors = vec![
-            create_test_editor_added("dao1", "editor1"),
-            create_test_editor_added("dao2", "editor2"),
-        ];
-        let initial_editors_events = vec![
-            create_test_initial_editor_added("dao1", vec!["initial1", "initial2"]),
-            create_test_initial_editor_added("dao3", vec!["initial3"]),
-        ];
-
-        let mut added_editors = map_editors_added(&editors);
-        let initial_editors = map_initial_editors_added(&initial_editors_events);
-        added_editors.extend(initial_editors);
-
-        assert_eq!(added_editors.len(), 5);
-
-        // Check regular editors
-        assert_eq!(added_editors[0].dao_address, "dao1");
-        assert_eq!(added_editors[0].editor_address, "editor1");
-        assert_eq!(added_editors[1].dao_address, "dao2");
-        assert_eq!(added_editors[1].editor_address, "editor2");
-
-        // Check initial editors
-        assert_eq!(added_editors[2].dao_address, "dao1");
-        assert_eq!(added_editors[2].editor_address, "initial1");
-        assert_eq!(added_editors[3].dao_address, "dao1");
-        assert_eq!(added_editors[3].editor_address, "initial2");
-        assert_eq!(added_editors[4].dao_address, "dao3");
-        assert_eq!(added_editors[4].editor_address, "initial3");
-    }
-
-    #[test]
     fn test_editors_from_newly_created_spaces_added_to_members() {
         // Create test spaces
         let spaces = vec![
@@ -728,7 +594,7 @@ mod tests {
 
         // Create matching plugins for the spaces
         let governance_plugins = vec![create_test_governance_plugin("dao1", "member1", "voting1")];
-        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2", "initial2")];
+        let personal_plugins = vec![create_test_personal_plugin("dao2", "admin2")];
 
         // Create editors for the same DAOs that have spaces created
         let editors = vec![
