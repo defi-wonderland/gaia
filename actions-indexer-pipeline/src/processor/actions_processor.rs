@@ -95,7 +95,7 @@ mod tests {
             action_type: 0,
             action_version: 1,
             space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
+            object_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
             metadata: Some(Bytes::from(vec![payload_byte])),
             block_number: 1,
@@ -104,7 +104,7 @@ mod tests {
                 "0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4",
             )
             .unwrap(),
-            object_type: 0,
+            object_type: ObjectType::Entity,
         }
     }
 
@@ -195,7 +195,7 @@ mod tests {
             action_type: 2, // no handler defined for this action type
             action_version: 1,
             space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
-            entity: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
+            object_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
             group_id: Some(uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b")),
             metadata: Some(Bytes::from(vec![0])),
             block_number: 1,
@@ -204,7 +204,7 @@ mod tests {
                 "0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4",
             )
             .unwrap(),
-            object_type: 0,
+            object_type: ObjectType::Relation, // no handler defined for this object type
         };
         let result = processor.process(&[action_event.clone()]);
         assert!(result.len() == 0); // no actions were processed
