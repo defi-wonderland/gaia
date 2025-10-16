@@ -362,7 +362,7 @@ impl TryFrom<&Action> for ActionRaw {
             action_version: action.action_version,
             space_pov: action.space_pov.parse()
                 .map_err(|e| ConsumerError::InvalidAddress(format!("space_pov: {}", e)))?,
-            entity: action.entity.parse()
+            object_id: action.object_id.parse()
                 .map_err(|e| ConsumerError::InvalidUuid(format!("entity: {}", e)))?,
             group_id: if action.group_id.is_some() {
                 Some(action.group_id.as_ref().unwrap().parse()
@@ -375,7 +375,11 @@ impl TryFrom<&Action> for ActionRaw {
             block_timestamp: action.block_timestamp.into(),
             tx_hash: action.tx_hash.parse()
                 .map_err(|e| ConsumerError::InvalidTxHash(format!("tx_hash: {}", e)))?,
-            object_type: 0,
+            object_type: match action.object_type {
+                0 => ObjectType::Entity,
+                1 => ObjectType::Relation,
+                _ => return Err(ConsumerError::InvalidObjectType(format!("object_type: {}", action.object_type))),
+            },
         })
     }
 }
