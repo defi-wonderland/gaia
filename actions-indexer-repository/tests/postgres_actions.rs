@@ -6,7 +6,7 @@
 //! Run with: `cargo test --test postgres_actions`
 
 use actions_indexer_repository::{ActionsRepository, PostgresActionsRepository};
-use actions_indexer_shared::types::{Action, ActionRaw, Vote, UserVote, VotesCount, VoteCriteria, VoteValue};
+use actions_indexer_shared::types::{Action, ActionRaw, Vote, UserVote, VotesCount, VoteCriteria, VoteValue, ObjectType, ActionType};
 use alloy::primitives::{Address, TxHash};
 use alloy::hex::FromHex;
 use uuid::{Uuid, uuid};
@@ -15,7 +15,7 @@ use sqlx::Row;
 /// Creates a test action raw data with default values.
 fn make_raw_action() -> ActionRaw {
     ActionRaw {
-        action_type: 1,
+        action_type: ActionType::Vote,
         action_version: 1,
         sender: Address::from_hex("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap(),
         object_id: Uuid::new_v4(),
@@ -151,7 +151,7 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     repository.update_user_votes(&[user_vote.clone()]).await.unwrap();
 
     let votes_in_db = sqlx::query!(
-        "SELECT user_id, entity_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
+        "SELECT user_id, object_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND object_id = $2 AND space_id = $3",
         format!("0x{}", hex::encode(user_vote.user_id.as_slice())),
         user_vote.object_id,
         user_vote.space_id,
@@ -176,7 +176,7 @@ async fn test_update_user_vote(pool: sqlx::PgPool) {
     repository.update_user_votes(&[updated_user_vote.clone()]).await.unwrap();
 
     let updated_votes_in_db = sqlx::query!(
-        "SELECT user_id, entity_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND entity_id = $2 AND space_id = $3",
+        "SELECT user_id, object_id, space_id, vote_type, voted_at FROM user_votes WHERE user_id = $1 AND object_id = $2 AND space_id = $3",
         format!("0x{}", hex::encode(updated_user_vote.user_id.as_slice())),
         updated_user_vote.object_id,
         updated_user_vote.space_id,
@@ -242,8 +242,8 @@ async fn test_update_votes_count(pool: sqlx::PgPool) {
     repository.update_votes_counts(&[votes_count.clone()]).await.unwrap();
 
     let counts_in_db = sqlx::query!(
-        "SELECT entity_id, space_id, upvotes, downvotes FROM votes_count WHERE entity_id = $1 AND space_id = $2",
-        votes_count.entity_id,
+        "SELECT object_id, space_id, upvotes, downvotes FROM votes_count WHERE object_id = $1 AND space_id = $2",
+        votes_count.object_id,
         votes_count.space_id,
     )
     .fetch_one(&pool)
@@ -265,8 +265,8 @@ async fn test_update_votes_count(pool: sqlx::PgPool) {
     repository.update_votes_counts(&[updated_votes_count.clone()]).await.unwrap();
 
     let updated_counts_in_db = sqlx::query!(
-        "SELECT entity_id, space_id, upvotes, downvotes FROM votes_count WHERE entity_id = $1 AND space_id = $2",
-        updated_votes_count.entity_id,
+        "SELECT object_id, space_id, upvotes, downvotes FROM votes_count WHERE object_id = $1 AND space_id = $2",
+        updated_votes_count.object_id,
         updated_votes_count.space_id,
     )
     .fetch_one(&pool)
