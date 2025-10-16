@@ -4,7 +4,7 @@ use regex::Regex;
 use semver::Version;
 use lazy_static::lazy_static;
 
-use actions_indexer_shared::types::ActionRaw;
+use actions_indexer_shared::types::{ActionRaw, ActionType, ObjectType};
 
 use super::pb::sf::substreams::rpc::v2::{BlockScopedData, BlockUndoSignal};
 use super::pb::sf::substreams::v1::Package;
@@ -358,7 +358,10 @@ impl TryFrom<&Action> for ActionRaw {
         Ok(ActionRaw {
             sender: action.sender.parse()
                 .map_err(|e| ConsumerError::InvalidAddress(format!("sender: {}", e)))?,
-            action_type: action.action_type,
+            action_type: match action.action_type {
+                0 => ActionType::Vote,
+                _ => return Err(ConsumerError::InvalidActionType(format!("action_type: {}", action.action_type))),
+            },
             action_version: action.action_version,
             space_pov: action.space_pov.parse()
                 .map_err(|e| ConsumerError::InvalidAddress(format!("space_pov: {}", e)))?,

@@ -393,7 +393,7 @@ mod tests {
         use alloy::primitives::TxHash;
         
         let raw_action = ActionRaw {
-            action_type: 1,
+            action_type: ActionType::Vote,
             action_version: 1,
             sender: dead_address(),
             object_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
@@ -435,7 +435,7 @@ mod tests {
         use alloy::primitives::TxHash;
         
         let base_raw = ActionRaw {
-            action_type: 1,
+            action_type: ActionType::Vote,
             action_version: 1,
             sender: dead_address(),
             object_id: uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5"),
@@ -490,7 +490,7 @@ mod tests {
         
         let vote1 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user1,
                 object_id: entity_id,
@@ -507,7 +507,7 @@ mod tests {
 
         let vote2 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user2,
                 object_id: entity_id,
@@ -550,7 +550,7 @@ mod tests {
         
         let vote1 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user,
                 object_id: entity1,
@@ -567,7 +567,7 @@ mod tests {
 
         let vote2 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user,
                 object_id: entity2,
@@ -611,7 +611,7 @@ mod tests {
         
         let upvote = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user1,
                 object_id: entity_id,
@@ -628,7 +628,7 @@ mod tests {
 
         let downvote = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user2,
                 object_id: entity_id,
@@ -645,7 +645,7 @@ mod tests {
 
         let remove_vote = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user3,
                 object_id: entity_id,
@@ -688,7 +688,7 @@ mod tests {
         
         let vote1 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user,
                 object_id: entity_id,
@@ -705,7 +705,7 @@ mod tests {
 
         let vote2 = Vote {
             raw: ActionRaw {
-                action_type: 1,
+                action_type: ActionType::Vote,
                 action_version: 1,
                 sender: user,
                 object_id: entity_id,
