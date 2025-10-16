@@ -736,4 +736,449 @@ mod tests {
         assert_eq!(space2_vote.vote_type, VoteValue::Down);
         assert_eq!(space2_vote.voted_at, 1713859300);
     }
+
+    #[tokio::test]
+    async fn test_get_latest_user_votes_same_user_different_object_type() {
+        use actions_indexer_shared::types::{ActionRaw, Vote};
+        use alloy::primitives::TxHash;
+        
+        let user = dead_address();
+        let object = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+
+        let vote1 = Vote {
+            raw: ActionRaw {
+                action_type: ActionType::Vote,
+                action_version: 1,
+                sender: user,
+                object_id: object,
+                group_id: None,
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
+                metadata: None,
+                block_number: 1,
+                block_timestamp: 1713859200,
+                tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: ObjectType::Entity,
+            },
+            vote: VoteValue::Up,
+        };
+
+        let vote2 = Vote {
+            raw: ActionRaw {
+                action_type: ActionType::Vote,
+                action_version: 1,
+                sender: user,
+                object_id: object,
+                group_id: None,
+                space_pov: uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b"),
+                metadata: None,
+                block_number: 1,
+                block_timestamp: 1713859200,
+                tx_hash: TxHash::from_hex("0x5427daee8d03277f8a30ea881692c04861e692ce5f305b7a689b76248cae63c4").unwrap(),
+                object_type: ObjectType::Relation, // Different object type
+            },
+            vote: VoteValue::Up,
+        };
+
+        let votes = vec![vote1, vote2];
+        let user_votes = get_latest_user_votes(&votes);
+
+        // Should return both votes since they are for different object types
+        assert_eq!(user_votes.len(), 2);
+        
+        // All votes have the same object_id and user_id
+        assert_eq!(user_votes.iter().all(|v| v.object_id == object), true);
+        assert_eq!(user_votes.iter().all(|v| v.user_id == user), true);
+
+        // All votes have different object types
+        assert_eq!(user_votes.iter().any(|v| v.object_type == ObjectType::Entity), true);
+        assert_eq!(user_votes.iter().any(|v| v.object_type == ObjectType::Relation), true);
+        
+    }
+
+    // ============================================================================
+    // update_vote_counts Tests
+    // ============================================================================
+
+    struct MockActionsRepository {
+        stored_user_votes: Vec<UserVote>,
+        stored_vote_counts: Vec<VotesCount>,
+    }
+
+    #[async_trait::async_trait]
+    impl ActionsRepository for MockActionsRepository {
+        async fn insert_actions(&self, _actions: &[Action]) -> Result<(), actions_indexer_repository::errors::ActionsRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn update_user_votes(&self, _user_votes: &[UserVote]) -> Result<(), actions_indexer_repository::errors::ActionsRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn update_votes_counts(&self, _votes_counts: &[VotesCount]) -> Result<(), actions_indexer_repository::errors::ActionsRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn persist_changeset(&self, _changeset: &Changeset<'_>) -> Result<(), actions_indexer_repository::errors::ActionsRepositoryError> {
+            unimplemented!()
+        }
+
+        async fn get_user_votes(&self, _vote_criteria: &[VoteCriteria]) -> Result<Vec<UserVote>, actions_indexer_repository::errors::ActionsRepositoryError> {
+            Ok(self.stored_user_votes.clone())
+        }
+
+        async fn get_vote_counts(&self, _vote_criteria: &[VoteCountCriteria]) -> Result<Vec<VotesCount>, actions_indexer_repository::errors::ActionsRepositoryError> {
+            Ok(self.stored_vote_counts.clone())
+        }
+
+        async fn check_tables_created(&self) -> Result<bool, actions_indexer_repository::errors::ActionsRepositoryError> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_empty_input() {
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![],
+            stored_vote_counts: vec![],
+        };
+
+        let user_votes: Vec<UserVote> = vec![];
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_new_upvote_no_existing_data() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![],
+            stored_vote_counts: vec![],
+        };
+
+        let user_votes = vec![UserVote {
+            user_id: user,
+            object_id,
+            object_type: ObjectType::Entity,
+            space_id,
+            vote_type: VoteValue::Up,
+            voted_at: 1713859200,
+        }];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].object_id, object_id);
+        assert_eq!(vote_counts[0].space_id, space_id);
+        assert_eq!(vote_counts[0].object_type, ObjectType::Entity);
+        assert_eq!(vote_counts[0].upvotes, 1);
+        assert_eq!(vote_counts[0].downvotes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_change_upvote_to_downvote() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859100,
+            }],
+            stored_vote_counts: vec![VotesCount {
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                upvotes: 5,
+                downvotes: 2,
+            }],
+        };
+
+        let user_votes = vec![UserVote {
+            user_id: user,
+            object_id,
+            object_type: ObjectType::Entity,
+            space_id,
+            vote_type: VoteValue::Down,
+            voted_at: 1713859200,
+        }];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].upvotes, 4); // 5 - 1
+        assert_eq!(vote_counts[0].downvotes, 3); // 2 + 1
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_change_downvote_to_upvote() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Down,
+                voted_at: 1713859100,
+            }],
+            stored_vote_counts: vec![VotesCount {
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                upvotes: 3,
+                downvotes: 7,
+            }],
+        };
+
+        let user_votes = vec![UserVote {
+            user_id: user,
+            object_id,
+            object_type: ObjectType::Entity,
+            space_id,
+            vote_type: VoteValue::Up,
+            voted_at: 1713859200,
+        }];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].upvotes, 4); // 3 + 1
+        assert_eq!(vote_counts[0].downvotes, 6); // 7 - 1
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_remove_upvote() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859100,
+            }],
+            stored_vote_counts: vec![VotesCount {
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                upvotes: 10,
+                downvotes: 5,
+            }],
+        };
+
+        let user_votes = vec![UserVote {
+            user_id: user,
+            object_id,
+            object_type: ObjectType::Entity,
+            space_id,
+            vote_type: VoteValue::Remove,
+            voted_at: 1713859200,
+        }];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].upvotes, 9); // 10 - 1
+        assert_eq!(vote_counts[0].downvotes, 5); // unchanged
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_multiple_users_same_object() {
+        let user1 = dead_address();
+        let user2 = Address::from_hex("0x1234567890123456789012345678901234567890").unwrap();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![],
+            stored_vote_counts: vec![],
+        };
+
+        let user_votes = vec![
+            UserVote {
+                user_id: user1,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859200,
+            },
+            UserVote {
+                user_id: user2,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Down,
+                voted_at: 1713859200,
+            },
+        ];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].object_id, object_id);
+        assert_eq!(vote_counts[0].upvotes, 1);
+        assert_eq!(vote_counts[0].downvotes, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_multiple_objects() {
+        let user = dead_address();
+        let object1 = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let object2 = uuid!("b8f00127-b3f5-55fc-92db-b5f6c72e3cf6");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![],
+            stored_vote_counts: vec![],
+        };
+
+        let user_votes = vec![
+            UserVote {
+                user_id: user,
+                object_id: object1,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859200,
+            },
+            UserVote {
+                user_id: user,
+                object_id: object2,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859200,
+            },
+        ];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 2);
+        
+        let object1_count = vote_counts.iter().find(|v| v.object_id == object1).unwrap();
+        let object2_count = vote_counts.iter().find(|v| v.object_id == object2).unwrap();
+        
+        assert_eq!(object1_count.upvotes, 1);
+        assert_eq!(object1_count.downvotes, 0);
+        assert_eq!(object2_count.upvotes, 1);
+        assert_eq!(object2_count.downvotes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_same_vote_no_change() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859100,
+            }],
+            stored_vote_counts: vec![VotesCount {
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                upvotes: 5,
+                downvotes: 2,
+            }],
+        };
+
+        let user_votes = vec![UserVote {
+            user_id: user,
+            object_id,
+            object_type: ObjectType::Entity,
+            space_id,
+            vote_type: VoteValue::Up, // Same vote type
+            voted_at: 1713859200,
+        }];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 1);
+        assert_eq!(vote_counts[0].upvotes, 5); // No change
+        assert_eq!(vote_counts[0].downvotes, 2); // No change
+    }
+
+    #[tokio::test]
+    async fn test_update_vote_counts_different_object_types() {
+        let user = dead_address();
+        let object_id = uuid!("a7ef0016-a2f4-44fb-82ca-a4f5c61d2cf5");
+        let space_id = uuid!("e50fe85c-108a-4d4a-97b9-376a1e5d318b");
+
+        let mock_repo = MockActionsRepository {
+            stored_user_votes: vec![],
+            stored_vote_counts: vec![],
+        };
+
+        let user_votes = vec![
+            UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Entity,
+                space_id,
+                vote_type: VoteValue::Up,
+                voted_at: 1713859200,
+            },
+            UserVote {
+                user_id: user,
+                object_id,
+                object_type: ObjectType::Relation,
+                space_id,
+                vote_type: VoteValue::Down,
+                voted_at: 1713859200,
+            },
+        ];
+
+        let result = update_vote_counts(&user_votes, &mock_repo).await;
+
+        assert!(result.is_ok());
+        let vote_counts = result.unwrap();
+        assert_eq!(vote_counts.len(), 2);
+        
+        let entity_count = vote_counts.iter().find(|v| v.object_type == ObjectType::Entity).unwrap();
+        let relation_count = vote_counts.iter().find(|v| v.object_type == ObjectType::Relation).unwrap();
+        
+        assert_eq!(entity_count.upvotes, 1);
+        assert_eq!(entity_count.downvotes, 0);
+        assert_eq!(relation_count.upvotes, 0);
+        assert_eq!(relation_count.downvotes, 1);
+    }
 }
