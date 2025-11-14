@@ -1,0 +1,24 @@
+[package]
+name = "poc-edit-decoder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wire = {path="../wire"}
+uuid = { version = "1.18.0", features = ["v4", "serde"] }
+indexer = {path="../indexer"}
+stream = { version = "0.1.0", path = "../stream" }
+tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "signal"] }
+dotenv = "0.15.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+async-trait = "0.1"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
+cache={ path="../cache" }
+serde_json = "1.0.145"
+serde = { version = "1.0", features = ["derive"] }
+sqlx = "0.8.6"
+prost = "0.13.5"
+base64 = "0.22"
+chrono = "0.4"

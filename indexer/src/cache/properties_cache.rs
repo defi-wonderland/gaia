@@ -32,6 +32,25 @@ impl PropertiesCache {
         }
     }
 
+    pub fn from_tuples(tuples: &Vec<(String, String)>) -> Result<Self, StorageError> {
+        let mut cache_map = HashMap::new();
+        for tuple in tuples {
+            let data_type = match tuple.1.as_str() {
+                "String" => DataType::String,
+                "Number" => DataType::Number,
+                "Boolean" => DataType::Boolean,
+                "Time" => DataType::Time,
+                "Point" => DataType::Point,
+                "Relation" => DataType::Relation,
+                _ => DataType::String,
+            };
+            cache_map.insert(Uuid::parse_str(tuple.0.as_str()).unwrap(), data_type);
+        }
+        Ok(Self {
+            inner: Arc::new(RwLock::new(cache_map)),
+        })
+    }
+
     pub async fn from_storage(storage: &PostgresStorage) -> Result<Self, StorageError> {
         let properties = storage.get_all_properties().await?;
         let mut cache_map = HashMap::new();
