@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package space;
+
+enum SpaceType {
+    DEFAULT = 0;
+    PERSONAL = 1;
+}
+
+message PersonalSpacePayload {
+    bytes owner = 1;
+}
+
+message DefaultDaoSpacePayload {
+    repeated bytes initial_editors = 1; // uuids
+    repeated bytes initial_members = 2; // uuids
+}
+
+message HermesCreateSpace {
+    bytes space_id = 1; // uuid
+    bytes topic_id = 2; // uuid
+
+    oneof payload {
+        PersonalSpacePayload personal_space = 3;
+        DefaultDaoSpacePayload default_dao_space = 4;
+    }
+    // Blockchain Metadata
+    uint64 created_at = 5;  // Unix timestamp in seconds
+    bytes created_by = 6;   // address
+    uint64 block_number = 7;
+    string cursor = 8;
+}
