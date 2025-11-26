@@ -1,0 +1,17 @@
+[package]
+name = "poc-neo4j-migrate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "fs"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "bigdecimal"] }
+neo4rs = "0.9.0-rc.8"
+uuid = { version = "1.17.0", features = ["v4", "serde"] }
+dotenv = "0.15.0"
+anyhow = "1.0"
+bigdecimal = "0.4"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+
