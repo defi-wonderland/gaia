@@ -2,3 +2,5 @@
 target
 .env
 node_modules
+poc-neo4j/data/
+poc-neo4j/backups/
