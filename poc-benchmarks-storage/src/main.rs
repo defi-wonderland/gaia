@@ -79,10 +79,12 @@ impl BenchmarkStats {
 }
 
 async fn query_postgres(pool: &PgPool, type_id: &str) -> Result<(Duration, usize)> {
-    // Query to get all ranks relations with nested data
+    // Query to get all ranks
     let query = r#"
         SELECT 
-            COUNT(*)
+            count(distinct fe.string) 
+            + count(distinct te.string)
+            + count(distinct v.number) as count
         FROM relations r
         LEFT JOIN values fe ON r.from_entity_id = fe.entity_id AND fe.property_id = 'a126ca53-0c8e-48d5-b888-82c734c38935'
         LEFT JOIN values te ON r.to_entity_id = te.entity_id AND te.property_id = 'a126ca53-0c8e-48d5-b888-82c734c38935'
@@ -105,14 +107,17 @@ async fn query_postgres(pool: &PgPool, type_id: &str) -> Result<(Duration, usize
 async fn query_neo4j(graph: &Graph, type_id: &str) -> Result<(Duration, usize)> {
     // Optimized query: explicitly specify relationship type and use indexed property
     let query = neo4rs::Query::new(
-        "MATCH (m)-[r:RELATES_TO]->(n:Entity) WHERE r.type_id = $type_id RETURN COUNT(*)".to_string(),
+        "MATCH (m)-[r:RELATES_TO {type_id: $type_id}]->(n) RETURN 
+        COUNT(distinct n.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string) 
+        + COUNT(distinct m.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string)
+        + COUNT(distinct r.prop_665d731a_ee6f_469d_81d2_11da727ca2cf_number) as count".to_string(),
     )
     .param("type_id", type_id);
 
     let start = Instant::now();
     let mut result = graph.execute(query).await?;
     let time_consumed = start.elapsed();
-    let result = result.next().await?.unwrap().get::<usize>("COUNT(*)").unwrap() as usize;
+    let result = result.next().await?.unwrap().get::<usize>("count").unwrap() as usize;
     Ok((time_consumed, result))
 }
 
