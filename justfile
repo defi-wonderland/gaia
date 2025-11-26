@@ -19,6 +19,13 @@ remove-gaia-db:
 
     @echo 'Gaia db removed'
 
+remove-neo4j-db:
+    cd poc-neo4j && docker compose down
+    rm -rf poc-neo4j/data
+    mkdir poc-neo4j/data
+
+    @echo 'Neo4j db removed'
+
 create-neo4j-db:
     cd poc-neo4j && docker compose up -d
 
@@ -29,7 +36,7 @@ create-neo4j-db:
 run-migration:
     cargo run -p poc-neo4j-migrate
 
-init-ranks-ingesting-server:
+init-ranks-server:
     @echo 'Initializing ranks ingesting server...'
     cargo run -p poc-edit-ingest --bin poc-edit-ingest
 
@@ -37,12 +44,10 @@ setup-rank-properties:
     @echo 'Setting up rank properties...'
     cargo run -p poc-edit-ingest --bin setup_rank_properties
 
-ingest-ranks:
+ingest-ranks csv_file:
     @echo 'Loading ranks from CSV...'
-    cargo run -p poc-edit-ingest --bin csv_loader ./poc-edit-ingest/data/random-rankings.csv
+    cargo run -p poc-edit-ingest --bin csv_loader {{ csv_file }}
 
 run-benchmarks:
     @echo 'Running benchmarks...'
     cargo run -p poc-benchmarks-storage
-
-    @echo 'Benchmarks ran'
