@@ -33,16 +33,12 @@ pub async fn decoder_task(mut edit_receiver: broadcast::Receiver<EditMessage>) {
 
     // Process incoming edits
     while let Ok(message) = edit_receiver.recv().await {
-        info!("Decoder received edit: {}", message.edit.name);
-
         let preprocessed_edit = PreprocessedEdit {
             space_id: message.space_id,
             edit: Some(message.edit.clone()),
             is_errored: false,
             cid: message.content_uri.clone(),
         };
-
-        info!("Preprocessed edit: {:?}", preprocessed_edit);
 
         let now: DateTime<Utc> = Utc::now();
         let rfc3339_string = now.to_rfc3339();
