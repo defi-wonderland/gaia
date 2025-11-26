@@ -1,0 +1,29 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: gaia-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    volumes:
+      - ./poc-neo4j/data:/data
+      - ./poc-neo4j/backups:/var/lib/neo4j/backups
+    environment:
+      - NEO4J_AUTH=none
+      # Memory configuration for better performance
+      - NEO4J_server_memory_heap_initial__size=1G
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_server_memory_pagecache_size=1G
+      # Performance tuning
+      - NEO4J_dbms_memory_transaction_total_max=2G
+      # Disable unnecessary features for benchmarking
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    restart: unless-stopped
+    networks:
+      - gaia-network
+
+networks:
+  gaia-network:
+    driver: bridge
+
+
