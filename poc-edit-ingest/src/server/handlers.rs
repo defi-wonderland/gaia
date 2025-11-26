@@ -69,12 +69,16 @@ pub async fn cache_handler(
 
     match state.edit_sender.send(message) {
         Ok(receiver_count) => {
-            info!("Edit sent to {} decoder(s)", receiver_count);
+            let queued = state.edit_sender.len();
+            info!(
+                "Edit sent to {} decoder(s), {} messages queued in channel",
+                receiver_count, queued
+            );
             (
                 StatusCode::CREATED,
                 Json(serde_json::json!({
                     "status": "success",
-                    "message": format!("Edit sent to decoder ({} receivers)", receiver_count)
+                    "message": format!("Edit sent to decoder ({} receivers, {} queued)", receiver_count, queued)
                 })),
             )
         }

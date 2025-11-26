@@ -43,9 +43,16 @@ async fn main() -> anyhow::Result<()> {
     let csv_path = &args[1];
     let server_url = env::var("SERVER_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8080/cache".to_string());
+    
+    // Rate limiting: max requests per second (0 = no limit)
+    let rate_limit_per_sec: u64 = env::var("RATE_LIMIT")
+        .unwrap_or_else(|_| "50".to_string())
+        .parse()
+        .unwrap_or(50);
 
     info!("Loading ranks from CSV: {}", csv_path);
     info!("Target server: {}", server_url);
+    info!("Rate limit: {} requests/sec (0 = unlimited)", rate_limit_per_sec);
 
     // Create HTTP client
     let client = reqwest::Client::builder()
@@ -58,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
     let mut total_processed = 0;
     let mut total_failed = 0;
     let start_time = Instant::now();
+    let mut last_request_time = Instant::now();
+    let min_interval = if rate_limit_per_sec > 0 {
+        std::time::Duration::from_millis(1000 / rate_limit_per_sec)
+    } else {
+        std::time::Duration::from_millis(0)
+    };
 
     for (idx, result) in rdr.deserialize().enumerate() {
         let record: RankRecord = match result {
@@ -97,6 +110,15 @@ async fn main() -> anyhow::Result<()> {
             record.rank_id, record.rank_name, record.item_count
         );
 
+        // Apply rate limiting
+        if rate_limit_per_sec > 0 {
+            let elapsed = last_request_time.elapsed();
+            if elapsed < min_interval {
+                tokio::time::sleep(min_interval - elapsed).await;
+            }
+            last_request_time = Instant::now();
+        }
+
         // Send to server
         let request_payload = CacheRequest {
             data: record.encoded_edit,
@@ -117,7 +139,6 @@ async fn main() -> anyhow::Result<()> {
         };
 
         if response.status().is_success() {
-            info!("✓ Rank #{} sent successfully", record.rank_id);
             total_processed += 1;
         } else {
             let status = response.status();

@@ -22,7 +22,9 @@ async fn main() {
     info!("Starting edit decoder server...");
 
     // Create broadcast channel for edit messages
-    let (edit_sender, edit_receiver) = broadcast::channel::<EditMessage>(100);
+    // Capacity set to 2000 to handle bulk CSV imports without dropping messages
+    let (edit_sender, edit_receiver) = broadcast::channel::<EditMessage>(2000);
+    info!("Channel capacity: 2000 messages");
 
     // Spawn decoder background task
     tokio::spawn(decoder::decoder_task(edit_receiver));
