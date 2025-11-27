@@ -6,6 +6,14 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct RankData {
+    from_entity_name: String,
+    to_entity_name: String,
+    score: f64,
+}
+
 #[derive(Debug)]
 struct BenchmarkStats {
     mean: Duration,
@@ -183,6 +191,81 @@ async fn query_neo4j_multihop(graph: &Graph, entity_id: &str, min_hops: i32, max
     Ok((time_consumed, result))
 }
 
+// Vector materialization queries for ranks
+async fn query_postgres_ranks_vec(pool: &PgPool, type_id: &str) -> Result<(Duration, Duration, Vec<RankData>)> {
+    // Query to get all ranks with entity names and scores
+    let query = r#"
+        SELECT 
+            fe.string as from_entity_name,
+            te.string as to_entity_name,
+            v.number::float8 as score
+        FROM relations r
+        LEFT JOIN values fe ON r.from_entity_id = fe.entity_id AND fe.property_id = 'a126ca53-0c8e-48d5-b888-82c734c38935'
+        LEFT JOIN values te ON r.to_entity_id = te.entity_id AND te.property_id = 'a126ca53-0c8e-48d5-b888-82c734c38935'
+        LEFT JOIN values v ON r.entity_id = v.entity_id AND v.property_id = '665d731a-ee6f-469d-81d2-11da727ca2cf'
+        WHERE r.type_id = $1
+        AND fe.string IS NOT NULL
+        AND te.string IS NOT NULL
+        AND v.number IS NOT NULL
+    "#;
+
+    let query_start = Instant::now();
+    let rows = sqlx::query(query)
+        .bind(Uuid::parse_str(type_id)?)
+        .fetch_all(pool)
+        .await
+        .context("Failed to query PostgreSQL")?;
+    let query_time = query_start.elapsed();
+
+    // Build the vector
+    let materialize_start = Instant::now();
+    let mut result_vec = Vec::with_capacity(rows.len());
+    for row in rows {
+        result_vec.push(RankData {
+            from_entity_name: row.try_get("from_entity_name")?,
+            to_entity_name: row.try_get("to_entity_name")?,
+            score: row.try_get("score")?,
+        });
+    }
+    let materialize_time = materialize_start.elapsed();
+
+    Ok((query_time, materialize_time, result_vec))
+}
+
+async fn query_neo4j_ranks_vec(graph: &Graph, type_id: &str) -> Result<(Duration, Duration, Vec<RankData>)> {
+    // Query to get all ranks with entity names and scores
+    let query = neo4rs::Query::new(
+        "MATCH (m)-[r:RELATES_TO {type_id: $type_id}]->(n) 
+         WHERE m.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string IS NOT NULL
+         AND n.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string IS NOT NULL
+         AND r.prop_665d731a_ee6f_469d_81d2_11da727ca2cf_number IS NOT NULL
+         RETURN 
+            m.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string as from_entity_name,
+            n.prop_a126ca53_0c8e_48d5_b888_82c734c38935_string as to_entity_name,
+            r.prop_665d731a_ee6f_469d_81d2_11da727ca2cf_number as score".to_string(),
+    )
+    .param("type_id", type_id);
+
+    let query_start = Instant::now();
+    let mut result = graph.execute(query).await?;
+    let query_time = query_start.elapsed();
+
+    // Build the vector from streaming results
+    // This is where potential inefficiency could occur
+    let materialize_start = Instant::now();
+    let mut result_vec = Vec::new();
+    while let Some(row) = result.next().await? {
+        result_vec.push(RankData {
+            from_entity_name: row.get::<String>("from_entity_name")?,
+            to_entity_name: row.get::<String>("to_entity_name")?,
+            score: row.get::<f64>("score")?,
+        });
+    }
+    let materialize_time = materialize_start.elapsed();
+
+    Ok((query_time, materialize_time, result_vec))
+}
+
 async fn benchmark_postgres(
     pool: &PgPool,
     type_id: &str,
@@ -350,6 +433,79 @@ async fn benchmark_neo4j_multihop(
     Ok((BenchmarkStats::from_durations(durations), result_count))
 }
 
+// Benchmark functions for vector materialization
+async fn benchmark_postgres_ranks_vec(
+    pool: &PgPool,
+    type_id: &str,
+    iterations: usize,
+    warmup: usize,
+) -> Result<(BenchmarkStats, BenchmarkStats, BenchmarkStats, usize)> {
+    info!("Running PostgreSQL warmup ({} runs)...", warmup);
+    for _ in 0..warmup {
+        query_postgres_ranks_vec(pool, type_id).await?;
+    }
+
+    info!("Running PostgreSQL benchmark ({} runs)...", iterations);
+    let mut query_durations = Vec::with_capacity(iterations);
+    let mut materialize_durations = Vec::with_capacity(iterations);
+    let mut total_durations = Vec::with_capacity(iterations);
+    let mut result_count = 0;
+    for i in 0..iterations {
+        let (query_time, materialize_time, res) = query_postgres_ranks_vec(pool, type_id).await?;
+        query_durations.push(query_time);
+        materialize_durations.push(materialize_time);
+        total_durations.push(query_time + materialize_time);
+        result_count = res.len();
+
+        if (i + 1) % 10 == 0 {
+            info!("  Progress: {}/{}", i + 1, iterations);
+        }
+    }
+
+    Ok((
+        BenchmarkStats::from_durations(total_durations),
+        BenchmarkStats::from_durations(query_durations),
+        BenchmarkStats::from_durations(materialize_durations),
+        result_count
+    ))
+}
+
+async fn benchmark_neo4j_ranks_vec(
+    graph: &Graph,
+    type_id: &str,
+    iterations: usize,
+    warmup: usize,
+) -> Result<(BenchmarkStats, BenchmarkStats, BenchmarkStats, usize)> {
+    info!("Running Neo4j warmup ({} runs)...", warmup);
+    for _ in 0..warmup {
+        query_neo4j_ranks_vec(graph, type_id).await?;
+    }
+
+    info!("Running Neo4j benchmark ({} runs)...", iterations);
+    let mut query_durations = Vec::with_capacity(iterations);
+    let mut materialize_durations = Vec::with_capacity(iterations);
+    let mut total_durations = Vec::with_capacity(iterations);
+    let mut result_count = 0;
+    for i in 0..iterations {
+        let (query_time, materialize_time, res) = query_neo4j_ranks_vec(graph, type_id).await?;
+        query_durations.push(query_time);
+        materialize_durations.push(materialize_time);
+        total_durations.push(query_time + materialize_time);
+        result_count = res.len();
+
+        if (i + 1) % 10 == 0 {
+            info!("  Progress: {}/{}", i + 1, iterations);
+        }
+    }
+
+    Ok((
+        BenchmarkStats::from_durations(total_durations),
+        BenchmarkStats::from_durations(query_durations),
+        BenchmarkStats::from_durations(materialize_durations),
+        result_count
+    ))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -372,9 +528,9 @@ async fn main() -> Result<()> {
         .parse()
         .context("BENCHMARK_WARMUP must be a valid number")?;
     
-    // Benchmark mode: "direct" or "multihop"
+    // Benchmark mode: "direct", "multihop", "vec_materialization", or "all"
     let benchmark_mode = std::env::var("BENCHMARK_MODE")
-        .unwrap_or_else(|_| "both".to_string())
+        .unwrap_or_else(|_| "all".to_string())
         .to_lowercase();
     
     // Enable query profiling (EXPLAIN/PROFILE) - set PROFILE_QUERIES=true
@@ -406,7 +562,7 @@ async fn main() -> Result<()> {
     }
     
     // Run direct query benchmark (ranks lookup)
-    if benchmark_mode == "direct" || benchmark_mode == "both" {
+    if benchmark_mode == "direct" || benchmark_mode == "both" || benchmark_mode == "all" {
         let type_id = "b51f6fc8-556a-40d0-ba87-616a92a626ef";
         
         info!("╔════════════════════════════════════════════════════════════╗");
@@ -462,7 +618,7 @@ async fn main() -> Result<()> {
     }
 
     // Run multi-hop traversal benchmark
-    if benchmark_mode == "multihop" || benchmark_mode == "both" {
+    if benchmark_mode == "multihop" || benchmark_mode == "both" || benchmark_mode == "all" {
         info!("╔════════════════════════════════════════════════════════════╗");
         info!("║         BENCHMARK 2: MULTI-HOP TRAVERSAL                   ║");
         info!("╚════════════════════════════════════════════════════════════╝");
@@ -543,6 +699,135 @@ async fn main() -> Result<()> {
 
         info!("");
         
+    }
+
+    // Run vector materialization benchmark
+    if benchmark_mode == "vec_materialization" || benchmark_mode == "all" {
+        let type_id = "b51f6fc8-556a-40d0-ba87-616a92a626ef";
+        
+        info!("╔════════════════════════════════════════════════════════════╗");
+        info!("║      BENCHMARK 3: RANKS VECTOR MATERIALIZATION             ║");
+        info!("╚════════════════════════════════════════════════════════════╝");
+        info!("Type ID: {}", type_id);
+        info!("Iterations: {}", iterations);
+        info!("Warmup runs: {}", warmup);
+        info!("");
+        info!("This benchmark measures the overhead of building a Vec<RankData>");
+        info!("containing (from_entity_name, to_entity_name, score) tuples.");
+        info!("Neo4j uses streaming results which may add overhead vs Postgres bulk fetch.");
+        info!("");
+
+        // Run PostgreSQL benchmark
+        info!("=== PostgreSQL Benchmark (Bulk Fetch + Vec Build) ===");
+        let (pg_total_stats, pg_query_stats, pg_materialize_stats, pg_count) = 
+            benchmark_postgres_ranks_vec(&pg_pool, type_id, iterations, warmup).await?;
+
+        // Run Neo4j benchmark
+        info!("");
+        info!("=== Neo4j Benchmark (Stream + Vec Build) ===");
+        let (neo4j_total_stats, neo4j_query_stats, neo4j_materialize_stats, neo4j_count) = 
+            benchmark_neo4j_ranks_vec(&graph, type_id, iterations, warmup).await?;
+
+        // Display results
+        info!("╔════════════════════════════════════════════════════════════╗");
+        info!("║              BENCHMARK RESULTS COMPARISON                  ║");
+        info!("╚════════════════════════════════════════════════════════════╝");
+
+        info!("=== PostgreSQL (Bulk Fetch) ===");
+        pg_total_stats.display("Total Time", pg_count);
+        pg_query_stats.display("  Query Execution", pg_count);
+        pg_materialize_stats.display("  Vec Materialization", pg_count);
+        
+        info!("");
+        info!("=== Neo4j (Stream) ===");
+        neo4j_total_stats.display("Total Time", neo4j_count);
+        neo4j_query_stats.display("  Query Execution", neo4j_count);
+        neo4j_materialize_stats.display("  Vec Materialization (Streaming)", neo4j_count);
+
+        if pg_count != neo4j_count {
+            warn!("Results mismatch: PostgreSQL returned {} results, Neo4j returned {} results", pg_count, neo4j_count);
+        }
+
+        // Compare results
+        info!("");
+        info!("╔════════════════════════════════════════════════════════════╗");
+        info!("║              DETAILED PERFORMANCE BREAKDOWN                ║");
+        info!("╚════════════════════════════════════════════════════════════╝");
+        
+        let pg_total_ms = pg_total_stats.mean.as_secs_f64() * 1000.0;
+        let pg_query_ms = pg_query_stats.mean.as_secs_f64() * 1000.0;
+        let pg_materialize_ms = pg_materialize_stats.mean.as_secs_f64() * 1000.0;
+        
+        let neo4j_total_ms = neo4j_total_stats.mean.as_secs_f64() * 1000.0;
+        let neo4j_query_ms = neo4j_query_stats.mean.as_secs_f64() * 1000.0;
+        let neo4j_materialize_ms = neo4j_materialize_stats.mean.as_secs_f64() * 1000.0;
+
+        info!("PostgreSQL Breakdown:");
+        info!("  Query Execution:     {:.3}ms ({:.1}% of total)", pg_query_ms, (pg_query_ms / pg_total_ms) * 100.0);
+        info!("  Vec Materialization: {:.3}ms ({:.1}% of total)", pg_materialize_ms, (pg_materialize_ms / pg_total_ms) * 100.0);
+        info!("  Total:               {:.3}ms", pg_total_ms);
+        
+        info!("");
+        info!("Neo4j Breakdown:");
+        info!("  Query Execution:     {:.3}ms ({:.1}% of total)", neo4j_query_ms, (neo4j_query_ms / neo4j_total_ms) * 100.0);
+        info!("  Vec Materialization: {:.3}ms ({:.1}% of total)", neo4j_materialize_ms, (neo4j_materialize_ms / neo4j_total_ms) * 100.0);
+        info!("  Total:               {:.3}ms", neo4j_total_ms);
+        
+        info!("");
+        info!("=== Head-to-Head Comparison ===");
+        
+        // Total time comparison
+        if pg_total_ms < neo4j_total_ms {
+            let ratio = neo4j_total_ms / pg_total_ms;
+            info!(
+                "Total Time: PostgreSQL is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, pg_total_ms, neo4j_total_ms
+            );
+        } else {
+            let ratio = pg_total_ms / neo4j_total_ms;
+            info!(
+                "Total Time: Neo4j is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, neo4j_total_ms, pg_total_ms
+            );
+        }
+        
+        // Query execution comparison
+        info!("");
+        if pg_query_ms < neo4j_query_ms {
+            let ratio = neo4j_query_ms / pg_query_ms;
+            info!(
+                "Query Execution: PostgreSQL is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, pg_query_ms, neo4j_query_ms
+            );
+        } else {
+            let ratio = pg_query_ms / neo4j_query_ms;
+            info!(
+                "Query Execution: Neo4j is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, neo4j_query_ms, pg_query_ms
+            );
+        }
+        
+        // Materialization comparison
+        info!("");
+        if pg_materialize_ms < neo4j_materialize_ms {
+            let ratio = neo4j_materialize_ms / pg_materialize_ms;
+            info!(
+                "Vec Materialization: PostgreSQL is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, pg_materialize_ms, neo4j_materialize_ms
+            );
+            info!("  → Neo4j streaming overhead: {:.3}ms ({:.1}%)", 
+                neo4j_materialize_ms - pg_materialize_ms,
+                ((neo4j_materialize_ms - pg_materialize_ms) / pg_materialize_ms) * 100.0
+            );
+        } else {
+            let ratio = pg_materialize_ms / neo4j_materialize_ms;
+            info!(
+                "Vec Materialization: Neo4j is FASTER by {:.2}x ({:.3}ms vs {:.3}ms)",
+                ratio, neo4j_materialize_ms, pg_materialize_ms
+            );
+        }
+
+        info!("");
     }
 
     info!("All benchmarks complete!");
