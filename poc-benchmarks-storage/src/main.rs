@@ -5,6 +5,7 @@ use sqlx::{PgPool, Row};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
+use futures::StreamExt;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -210,17 +211,16 @@ async fn query_postgres_ranks_vec(pool: &PgPool, type_id: &str) -> Result<(Durat
     "#;
 
     let query_start = Instant::now();
-    let rows = sqlx::query(query)
+    let mut rows = sqlx::query(query)
         .bind(Uuid::parse_str(type_id)?)
-        .fetch_all(pool)
-        .await
-        .context("Failed to query PostgreSQL")?;
+        .fetch(pool);
     let query_time = query_start.elapsed();
 
     // Build the vector
     let materialize_start = Instant::now();
-    let mut result_vec = Vec::with_capacity(rows.len());
-    for row in rows {
+    let mut result_vec = Vec::new();
+    while let Some(row_result) = rows.next().await {
+        let row = row_result?;
         result_vec.push(RankData {
             from_entity_name: row.try_get("from_entity_name")?,
             to_entity_name: row.try_get("to_entity_name")?,

@@ -3713,6 +3713,7 @@ dependencies = [
  "anyhow",
  "bigdecimal 0.4.9",
  "dotenv",
+ "futures 0.3.31",
  "neo4rs",
  "serde",
  "serde_json",
