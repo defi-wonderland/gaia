@@ -51,3 +51,8 @@ ingest-ranks csv_file:
 run-benchmarks:
     @echo 'Running benchmarks...'
     cargo run -p poc-benchmarks-storage
+
+create-db-dump container_name="gaia_20251128" dump_file="gaia_dump.sql":
+    docker exec -t {{ container_name }} pg_dump -U postgres postgres > {{ dump_file }}
+
+    @echo 'DB {{ container_name }} dump created in {{ dump_file }}'
