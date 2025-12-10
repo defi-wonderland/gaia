@@ -14,7 +14,3 @@ run:
 test:
     uv run pytest
 
-# Run tests with coverage report
-test-cov:
-    uv run pytest --cov
-
