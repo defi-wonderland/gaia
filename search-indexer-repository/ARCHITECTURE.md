@@ -5,36 +5,36 @@
 ```mermaid
 sequenceDiagram
     participant App as Application Code
-    participant Client as SearchIndexClient
+    participant Service as SearchIndexService
     participant Provider as SearchIndexProvider (Trait)
-    participant OpenSearch as OpenSearchClient
+    participant OpenSearch as OpenSearchProvider
     participant Backend as OpenSearch Cluster
 
-    App->>Client: update(UpdateEntityRequest)
-    Client->>Client: validate_uuid(entity_id)
-    Client->>Client: validate_uuid(space_id)
-    Client->>Provider: update_document(request)
+    App->>Service: update(UpdateEntityRequest)
+    Service->>Service: validate_uuid(entity_id)
+    Service->>Service: validate_uuid(space_id)
+    Service->>Provider: update_document(request)
     Provider->>OpenSearch: update_document(request)
     OpenSearch->>Backend: HTTP via opensearch crate (/index/_update/{id} with doc_as_upsert)
     Backend-->>OpenSearch: Response (200 OK)
     OpenSearch-->>Provider: Ok(())
-    Provider-->>Client: Ok(())
-    Client-->>App: Ok(())
+    Provider-->>Service: Ok(())
+    Service-->>App: Ok(())
 
     Note over App,Backend: Error Flow (Validation Error)
-    App->>Client: update(invalid_request)
-    Client->>Client: validate_uuid() fails
-    Client-->>App: Err(SearchIndexError::ValidationError)
+    App->>Service: update(invalid_request)
+    Service->>Service: validate_uuid() fails
+    Service-->>App: Err(SearchIndexError::ValidationError)
 
     Note over App,Backend: Error Flow (Backend Error)
-    App->>Client: update(request)
-    Client->>Provider: update_document(request)
+    App->>Service: update(request)
+    Service->>Provider: update_document(request)
     Provider->>OpenSearch: update_document(request)
     OpenSearch->>Backend: HTTP via opensearch crate (/index/_update/{id})
     Backend-->>OpenSearch: Response (500 Error)
     OpenSearch-->>Provider: Err(SearchIndexError::UpdateError)
-    Provider-->>Client: Err(SearchIndexError::UpdateError)
-    Client-->>App: Err(SearchIndexError::UpdateError)
+    Provider-->>Service: Err(SearchIndexError::UpdateError)
+    Service-->>App: Err(SearchIndexError::UpdateError)
 ```
 
 ## Layered Overview
@@ -42,13 +42,13 @@ sequenceDiagram
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Application Code                         │
-│  - Uses SearchIndexClient for all operations                    │
+│  - Uses SearchIndexService for all operations                   │
 │  - Handles SearchIndexError                                     │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SearchIndexClient                            │
+│                    SearchIndexService                           │
 │  - Validates input (UUIDs, batch sizes)                         │
 │  - Converts requests to EntityDocument                          │
 │  - Delegates operations to SearchIndexProvider                  │
@@ -67,7 +67,7 @@ sequenceDiagram
                              │ Implementation
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  OpenSearchClient                               │
+│                  OpenSearchProvider                             │
 │  - Implements SearchIndexProvider                               │
 │  - Makes calls to an OpenSearch cluster using the opensearch    │
 │    Rust crate for all REST calls                                │
@@ -86,7 +86,7 @@ sequenceDiagram
 
 ## Component Responsibilities
 
-### SearchIndexClient
+### SearchIndexService
 - **Input validation**: UUID format, required fields, batch size limits
 - **Request handling**: UpdateEntityRequest (upsert: creates or updates)
 - **Error handling**: All errors are SearchIndexError
@@ -97,7 +97,7 @@ sequenceDiagram
 - **Operation methods**: CRUD and bulk operations
 - **Error type**: Returns SearchIndexError for all operations
 
-### OpenSearchClient
+### OpenSearchProvider
 - **Implements SearchIndexProvider**: Concrete backend implementation
 - **HTTP communication**: All calls to OpenSearch cluster are performed using the [opensearch Rust crate](https://docs.rs/opensearch/)
 - **Error conversion**: Translates OpenSearch errors into SearchIndexError
@@ -110,11 +110,11 @@ All errors propagate as `SearchIndexError` through each layer:
 ```
 OpenSearch Cluster Error
     ↓
-OpenSearchClient (converts to SearchIndexError)
+OpenSearchProvider (converts to SearchIndexError)
     ↓
 SearchIndexProvider (passes through)
     ↓
-SearchIndexClient (passes through)
+SearchIndexService (passes through)
     ↓
 Application Code (handles SearchIndexError)
 ```
@@ -124,11 +124,11 @@ Application Code (handles SearchIndexError)
 ```
 1. Application: update(UpdateEntityRequest { entity_id: "123", ... })
    ↓
-2. SearchIndexClient: Validates UUIDs
+2. SearchIndexService: Validates UUIDs
    ↓
 3. SearchIndexProvider: update_document(&UpdateEntityRequest)
    ↓
-4. OpenSearchClient: Makes HTTP update request with doc_as_upsert=true
+4. OpenSearchProvider: Makes HTTP update request with doc_as_upsert=true
    ↓
 5. OpenSearch: Creates document if missing, updates if exists, returns 200 OK
    ↓

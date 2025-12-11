@@ -7,7 +7,7 @@ use thiserror::Error;
 
 /// Unified errors from search index operations.
 ///
-/// Used by the `SearchIndexProvider` trait and `SearchIndexClient` for all search index
+/// Used by the `SearchIndexProvider` trait and `SearchIndexService` for all search index
 /// operations. Includes both low-level backend errors (connection, serialization, etc.)
 /// and high-level application errors (validation, business logic, etc.).
 #[derive(Debug, Clone, Error)]

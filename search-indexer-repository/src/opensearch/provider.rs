@@ -1,7 +1,7 @@
-//! OpenSearch client implementation.
+//! OpenSearch provider implementation.
 //!
 //! This module provides the concrete implementation of `SearchIndexProvider`
-//! using the OpenSearch Rust client.
+//! using the OpenSearch Rust crate.
 
 use async_trait::async_trait;
 use opensearch::{
@@ -22,7 +22,7 @@ use crate::types::{
 };
 use crate::utils;
 
-/// OpenSearch client implementation.
+/// OpenSearch provider implementation.
 ///
 /// Provides full-text search capabilities using OpenSearch as the backend.
 ///
@@ -32,7 +32,7 @@ use crate::utils;
 /// use search_indexer_repository::opensearch::IndexConfig;
 /// use search_indexer_repository::types::UpdateEntityRequest;
 /// let config = IndexConfig::new("entities", 0);
-/// let client = OpenSearchClient::new("http://localhost:9200", config).await?;
+/// let provider = OpenSearchProvider::new("http://localhost:9200", config).await?;
 ///
 /// let request = UpdateEntityRequest {
 ///     entity_id: Uuid::new_v4().to_string(),
@@ -42,15 +42,15 @@ use crate::utils;
 ///     ..Default::default()
 /// };
 /// // This will create the document if it doesn't exist, or update it if it does
-/// client.update_document(&request).await?;
+/// provider.update_document(&request).await?;
 /// ```
-pub struct OpenSearchClient {
+pub struct OpenSearchProvider {
     client: OpenSearch,
     index_config: IndexConfig,
 }
 
-impl OpenSearchClient {
-    /// Create a new OpenSearch client connected to the specified URL.
+impl OpenSearchProvider {
+    /// Create a new OpenSearch provider connected to the specified URL.
     ///
     /// # Arguments
     ///
@@ -59,7 +59,7 @@ impl OpenSearchClient {
     ///
     /// # Returns
     ///
-    /// * `Ok(OpenSearchClient)` - A new client instance
+    /// * `Ok(OpenSearchProvider)` - A new provider instance
     /// * `Err(SearchIndexError)` - If connection setup fails
     pub async fn new(url: &str, index_config: IndexConfig) -> Result<Self, SearchIndexError> {
         let parsed_url =
@@ -77,7 +77,7 @@ impl OpenSearchClient {
             url = %url,
             alias = %index_config.alias,
             version = index_config.version,
-            "Created OpenSearch client"
+            "Created OpenSearch provider"
         );
 
         Ok(Self {
@@ -167,7 +167,7 @@ impl OpenSearchClient {
 }
 
 #[async_trait]
-impl SearchIndexProvider for OpenSearchClient {
+impl SearchIndexProvider for OpenSearchProvider {
     /// Update specific fields of a document, creating it if it doesn't exist (upsert).
     ///
     /// This function performs an upsert operation: if the document exists, only fields that are
@@ -482,7 +482,7 @@ mod tests {
         let entity_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
         let space_id = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
 
-        let doc_id = OpenSearchClient::document_id(&entity_id, &space_id);
+        let doc_id = OpenSearchProvider::document_id(&entity_id, &space_id);
 
         assert_eq!(
             doc_id,
@@ -502,13 +502,13 @@ mod tests {
             "a1".to_string(),
             "_private".to_string(),
         ];
-        assert!(OpenSearchClient::validate_property_keys(&keys).is_ok());
+        assert!(OpenSearchProvider::validate_property_keys(&keys).is_ok());
     }
 
     #[test]
     fn test_validate_property_keys_empty_vec() {
         let keys = vec![];
-        let result = OpenSearchClient::validate_property_keys(&keys);
+        let result = OpenSearchProvider::validate_property_keys(&keys);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn test_validate_property_keys_empty_string() {
         let keys = vec!["".to_string()];
-        let result = OpenSearchClient::validate_property_keys(&keys);
+        let result = OpenSearchProvider::validate_property_keys(&keys);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -560,7 +560,7 @@ mod tests {
 
         for (key, description) in test_cases {
             let keys = vec![key.to_string()];
-            let result = OpenSearchClient::validate_property_keys(&keys);
+            let result = OpenSearchProvider::validate_property_keys(&keys);
             assert!(
                 result.is_err(),
                 "Expected error for key '{}' ({})",
@@ -582,14 +582,14 @@ mod tests {
             "description".to_string(),
             "invalid-key".to_string(), // Invalid
         ];
-        let result = OpenSearchClient::validate_property_keys(&keys);
+        let result = OpenSearchProvider::validate_property_keys(&keys);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_create_unset_properties_script_single_key() {
         let keys = vec!["name".to_string()];
-        let script = OpenSearchClient::create_unset_properties_script(&keys).unwrap();
+        let script = OpenSearchProvider::create_unset_properties_script(&keys).unwrap();
         assert_eq!(
             script,
             "if (ctx._source.containsKey(\"name\")) { ctx._source.remove(\"name\") }"
@@ -603,7 +603,7 @@ mod tests {
             "description".to_string(),
             "avatar".to_string(),
         ];
-        let script = OpenSearchClient::create_unset_properties_script(&keys).unwrap();
+        let script = OpenSearchProvider::create_unset_properties_script(&keys).unwrap();
         assert!(script.contains("name"));
         assert!(script.contains("description"));
         assert!(script.contains("avatar"));
@@ -622,7 +622,7 @@ mod tests {
             "cover".to_string(),
             "entity_global_score".to_string(),
         ];
-        let script = OpenSearchClient::create_unset_properties_script(&keys).unwrap();
+        let script = OpenSearchProvider::create_unset_properties_script(&keys).unwrap();
 
         // Verify exact script format
         let expected_script = "if (ctx._source.containsKey(\"name\")) { ctx._source.remove(\"name\") }; if (ctx._source.containsKey(\"description\")) { ctx._source.remove(\"description\") }; if (ctx._source.containsKey(\"avatar\")) { ctx._source.remove(\"avatar\") }; if (ctx._source.containsKey(\"cover\")) { ctx._source.remove(\"cover\") }; if (ctx._source.containsKey(\"entity_global_score\")) { ctx._source.remove(\"entity_global_score\") }";
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn test_create_unset_properties_script_with_underscore() {
         let keys = vec!["entity_global_score".to_string()];
-        let script = OpenSearchClient::create_unset_properties_script(&keys).unwrap();
+        let script = OpenSearchProvider::create_unset_properties_script(&keys).unwrap();
         assert_eq!(
             script,
             "if (ctx._source.containsKey(\"entity_global_score\")) { ctx._source.remove(\"entity_global_score\") }"
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn test_create_unset_properties_script_empty() {
         let keys = vec![];
-        let result = OpenSearchClient::create_unset_properties_script(&keys);
+        let result = OpenSearchProvider::create_unset_properties_script(&keys);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn test_create_unset_properties_script_invalid_key() {
         let keys = vec!["invalid-key".to_string()];
-        let result = OpenSearchClient::create_unset_properties_script(&keys);
+        let result = OpenSearchProvider::create_unset_properties_script(&keys);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),

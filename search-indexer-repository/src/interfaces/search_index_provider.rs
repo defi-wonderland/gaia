@@ -13,7 +13,7 @@ use crate::types::{
 /// Abstracts the underlying search index implementation (OpenSearch, Elasticsearch, etc.).
 ///
 /// This trait defines the interface for all search index backend implementations. Implementations
-/// are injected into `SearchIndexClient` to enable dependency injection and easy testing with
+/// are injected into `SearchIndexService` to enable dependency injection and easy testing with
 /// mock implementations.
 ///
 /// All methods return `Result<T, SearchIndexError>` for consistent error handling across

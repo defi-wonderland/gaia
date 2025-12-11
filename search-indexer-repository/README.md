@@ -7,7 +7,7 @@ Repository interfaces and implementations for the search indexer system.
 This crate provides:
 
 - **SearchIndexProvider trait**: Abstract interface for search index operations
-- **OpenSearchClient**: Concrete implementation using OpenSearch
+- **OpenSearchProvider**: Concrete implementation using OpenSearch
 
 ## Architecture
 
@@ -28,7 +28,7 @@ The crate uses a trait-based design for dependency injection, allowing:
                   │
                   ▼
 ┌─────────────────────────────────────┐
-│        OpenSearchClient             │  (implementation)
+│        OpenSearchProvider           │  (implementation)
 │  - Uses opensearch crate            │
 │  - Configurable index settings      │
 └─────────────────────────────────────┘
@@ -43,15 +43,15 @@ or update it if it does exist.
 ## Usage
 
 ```rust
-use search_indexer_repository::{OpenSearchClient, SearchIndexProvider};
+use search_indexer_repository::{OpenSearchProvider, SearchIndexProvider};
 use search_indexer_repository::types::UpdateEntityRequest;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client
+    // Create provider
     use search_indexer_repository::opensearch::IndexConfig;
     let config = IndexConfig::new("entities", 0);
-    let client = OpenSearchClient::new("http://localhost:9200", config).await?;
+    let provider = OpenSearchProvider::new("http://localhost:9200", config).await?;
     
     // Update a document (Creates it if it doesn't exist, updates it if it does)
     let request = UpdateEntityRequest {
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     // This will create the document if it doesn't exist, or update it if it does
-    client.update_document(&request).await?;
+    provider.update_document(&request).await?;
     
     Ok(())
 }

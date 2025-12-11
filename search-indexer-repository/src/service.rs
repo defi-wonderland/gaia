@@ -1,6 +1,6 @@
-//! Search index client implementation.
+//! Search index service implementation.
 //!
-//! This module provides the main client for interacting with the search index.
+//! This module provides the main service for interacting with the search index.
 //! Application code uses this to update and delete documents.
 //!
 //! # Note on Document Creation
@@ -9,7 +9,7 @@
 //! The `update` function performs an upsert operation: it will create the document if
 //! it doesn't exist, or update it if it does exist.
 
-use crate::config::SearchIndexConfig;
+use crate::config::SearchIndexServiceConfig;
 use crate::errors::SearchIndexError;
 use crate::interfaces::SearchIndexProvider;
 use crate::types::{
@@ -17,7 +17,7 @@ use crate::types::{
 };
 use uuid::Uuid;
 
-/// The main client for interacting with the search index.
+/// The main service for interacting with the search index.
 ///
 /// This is the high-level API that application code should use. It provides input
 /// validation, request conversion, and delegates to a `SearchIndexProvider` for
@@ -33,13 +33,13 @@ use uuid::Uuid;
 /// # Example
 ///
 /// ```no_run
-/// use search_indexer_repository::{SearchIndexClient, SearchIndexProvider};
-/// use search_indexer_repository::opensearch::OpenSearchClient;
+/// use search_indexer_repository::{SearchIndexService, SearchIndexProvider};
+/// use search_indexer_repository::opensearch::OpenSearchProvider;
 /// use search_indexer_repository::types::UpdateEntityRequest;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let provider = Box::new(OpenSearchClient::new("http://localhost:9200", config).await?);
-/// let client = SearchIndexClient::new(provider);
+/// let provider = Box::new(OpenSearchProvider::new("http://localhost:9200", config).await?);
+/// let service = SearchIndexService::new(provider);
 ///
 /// let request = UpdateEntityRequest {
 ///     entity_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -49,47 +49,50 @@ use uuid::Uuid;
 /// };
 ///
 /// // This will create the document if it doesn't exist, or update it if it does
-/// client.update(request).await?;
+/// service.update(request).await?;
 /// # Ok(())
 /// # }
 /// ```
-pub struct SearchIndexClient {
+pub struct SearchIndexService {
     provider: Box<dyn SearchIndexProvider>,
-    config: SearchIndexConfig,
+    config: SearchIndexServiceConfig,
 }
 
-impl SearchIndexClient {
-    /// Create a new SearchIndexClient with default configuration.
+impl SearchIndexService {
+    /// Create a new SearchIndexService with default configuration.
     ///
     /// The default configuration includes a batch size limit of 1000 documents.
     ///
     /// # Arguments
     ///
-    /// * `provider` - A boxed implementation of `SearchIndexProvider` (e.g., `OpenSearchClient`)
+    /// * `provider` - A boxed implementation of `SearchIndexProvider` (e.g., `OpenSearchProvider`)
     ///
     /// # Returns
     ///
-    /// A new `SearchIndexClient` instance with default configuration.
+    /// A new `SearchIndexService` instance with default configuration.
     pub fn new(provider: Box<dyn SearchIndexProvider>) -> Self {
         Self {
             provider,
-            config: SearchIndexConfig::default(),
+            config: SearchIndexServiceConfig::default(),
         }
     }
 
-    /// Create a new SearchIndexClient with custom configuration.
+    /// Create a new SearchIndexService with custom configuration.
     ///
     /// Use this when you need to customize batch size limits or other configuration options.
     ///
     /// # Arguments
     ///
-    /// * `provider` - A boxed implementation of `SearchIndexProvider` (e.g., `OpenSearchClient`)
-    /// * `config` - Custom configuration for the client
+    /// * `provider` - A boxed implementation of `SearchIndexProvider` (e.g., `OpenSearchProvider`)
+    /// * `config` - Custom configuration for the service
     ///
     /// # Returns
     ///
-    /// A new `SearchIndexClient` instance with the specified configuration.
-    pub fn with_config(provider: Box<dyn SearchIndexProvider>, config: SearchIndexConfig) -> Self {
+    /// A new `SearchIndexService` instance with the specified configuration.
+    pub fn with_config(
+        provider: Box<dyn SearchIndexProvider>,
+        config: SearchIndexServiceConfig,
+    ) -> Self {
         Self { provider, config }
     }
 
@@ -191,19 +194,19 @@ impl SearchIndexClient {
     /// # Example
     ///
     /// ```no_run
-    /// use search_indexer_repository::{SearchIndexClient, SearchIndexProvider};
+    /// use search_indexer_repository::{SearchIndexService, SearchIndexProvider};
     /// use search_indexer_repository::types::UnsetEntityPropertiesRequest;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let provider = Box::new(search_indexer_repository::opensearch::OpenSearchClient::new("http://localhost:9200", search_indexer_repository::opensearch::IndexConfig::new("entities", 0)).await?);
-    /// # let client = SearchIndexClient::new(provider);
+    /// # let provider = Box::new(search_indexer_repository::opensearch::OpenSearchProvider::new("http://localhost:9200", search_indexer_repository::opensearch::IndexConfig::new("entities", 0)).await?);
+    /// # let service = SearchIndexService::new(provider);
     /// let request = UnsetEntityPropertiesRequest {
     ///     entity_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
     ///     space_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8".to_string(),
     ///     property_keys: vec!["description".to_string(), "avatar".to_string()],
     /// };
     ///
-    /// client.unset_properties(request).await?;
+    /// service.unset_properties(request).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -470,9 +473,9 @@ mod tests {
     #[tokio::test]
     async fn test_batch_update_empty() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
-        let result = client.batch_update(vec![]).await.unwrap();
+        let result = service.batch_update(vec![]).await.unwrap();
 
         assert_eq!(result.total, 0);
         assert_eq!(result.succeeded, 0);
@@ -483,13 +486,13 @@ mod tests {
     #[tokio::test]
     async fn test_batch_update_single() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         let entity_id = Uuid::new_v4().to_string();
         let space_id = Uuid::new_v4().to_string();
         let requests = vec![create_test_update_request(&entity_id, &space_id)];
 
-        let result = client.batch_update(requests).await.unwrap();
+        let result = service.batch_update(requests).await.unwrap();
 
         assert_eq!(result.total, 1);
         assert_eq!(result.succeeded, 1);
@@ -501,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_update_multiple() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         let requests = vec![
             create_test_update_request(&Uuid::new_v4().to_string(), &Uuid::new_v4().to_string()),
@@ -509,7 +512,7 @@ mod tests {
             create_test_update_request(&Uuid::new_v4().to_string(), &Uuid::new_v4().to_string()),
         ];
 
-        let result = client.batch_update(requests).await.unwrap();
+        let result = service.batch_update(requests).await.unwrap();
 
         assert_eq!(result.total, 3);
         assert_eq!(result.succeeded, 3);
@@ -520,9 +523,9 @@ mod tests {
     #[tokio::test]
     async fn test_batch_delete_empty() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
-        let result = client.batch_delete(vec![]).await.unwrap();
+        let result = service.batch_delete(vec![]).await.unwrap();
 
         assert_eq!(result.total, 0);
         assert_eq!(result.succeeded, 0);
@@ -533,13 +536,13 @@ mod tests {
     #[tokio::test]
     async fn test_batch_delete_single() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         let entity_id = Uuid::new_v4().to_string();
         let space_id = Uuid::new_v4().to_string();
         let requests = vec![create_test_delete_request(&entity_id, &space_id)];
 
-        let result = client.batch_delete(requests).await.unwrap();
+        let result = service.batch_delete(requests).await.unwrap();
 
         assert_eq!(result.total, 1);
         assert_eq!(result.succeeded, 1);
@@ -551,7 +554,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_delete_multiple() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         let requests = vec![
             create_test_delete_request(&Uuid::new_v4().to_string(), &Uuid::new_v4().to_string()),
@@ -559,7 +562,7 @@ mod tests {
             create_test_delete_request(&Uuid::new_v4().to_string(), &Uuid::new_v4().to_string()),
         ];
 
-        let result = client.batch_delete(requests).await.unwrap();
+        let result = service.batch_delete(requests).await.unwrap();
 
         assert_eq!(result.total, 3);
         assert_eq!(result.succeeded, 3);
@@ -570,7 +573,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_validation() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         // Test empty entity_id
         let request = UpdateEntityRequest {
@@ -584,7 +587,7 @@ mod tests {
             space_score: None,
             entity_space_score: None,
         };
-        assert!(client.update(request).await.is_err());
+        assert!(service.update(request).await.is_err());
 
         // Test empty space_id
         let request = UpdateEntityRequest {
@@ -598,34 +601,34 @@ mod tests {
             space_score: None,
             entity_space_score: None,
         };
-        assert!(client.update(request).await.is_err());
+        assert!(service.update(request).await.is_err());
     }
 
     #[tokio::test]
     async fn test_delete_validation() {
         let provider = MockProvider::new();
-        let client = SearchIndexClient::new(Box::new(provider));
+        let service = SearchIndexService::new(Box::new(provider));
 
         // Test empty entity_id
         let request = DeleteEntityRequest {
             entity_id: "".to_string(),
             space_id: Uuid::new_v4().to_string(),
         };
-        assert!(client.delete(request).await.is_err());
+        assert!(service.delete(request).await.is_err());
 
         // Test empty space_id
         let request = DeleteEntityRequest {
             entity_id: Uuid::new_v4().to_string(),
             space_id: "".to_string(),
         };
-        assert!(client.delete(request).await.is_err());
+        assert!(service.delete(request).await.is_err());
     }
 
     #[tokio::test]
     async fn test_batch_size_unlimited() {
         let provider = MockProvider::new();
-        let config = SearchIndexConfig::unlimited();
-        let client = SearchIndexClient::with_config(Box::new(provider), config);
+        let config = SearchIndexServiceConfig::unlimited();
+        let service = SearchIndexService::with_config(Box::new(provider), config);
 
         // Should allow any batch size
         let requests: Vec<UpdateEntityRequest> = (0..10000)
@@ -643,7 +646,7 @@ mod tests {
             .collect();
 
         // This should not fail due to batch size (though it might fail for other reasons)
-        let result = client.batch_update(requests).await;
+        let result = service.batch_update(requests).await;
         // If it fails, it should not be BatchSizeExceeded
         if let Err(SearchIndexError::BatchSizeExceeded { .. }) = result {
             panic!("Batch size should not be limited with unlimited config");

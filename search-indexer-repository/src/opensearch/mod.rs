@@ -3,8 +3,8 @@
 //! This module provides a concrete implementation of `SearchIndexProvider`
 //! using OpenSearch as the backend.
 
-mod client;
 mod index_config;
+mod provider;
 
-pub use client::OpenSearchClient;
 pub use index_config::IndexConfig;
+pub use provider::OpenSearchProvider;
