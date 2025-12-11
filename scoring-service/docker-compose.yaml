@@ -1,0 +1,11 @@
+services:
+  scoring-service:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      # Disable Python output buffering for real-time logs in Docker
+      - PYTHONUNBUFFERED=1
+      # Use copy mode for uv to avoid hardlink warnings in Docker volumes
+      - UV_LINK_MODE=copy
+
