@@ -28,22 +28,16 @@ def sample_spaces() -> list[Space]:
     now = datetime.now()
     root = Space(
         id="space_00",
-        name="Root Space",
-        description="The root space",
         created_at=now,
         parent_space_id=None,
     )
     child1 = Space(
         id="space_01",
-        name="Child Space 1",
-        description="First child space",
         created_at=now,
         parent_space_id="space_00",
     )
     child2 = Space(
         id="space_02",
-        name="Child Space 2",
-        description="Second child space",
         created_at=now,
         parent_space_id="space_00",
     )
@@ -56,19 +50,16 @@ def sample_users(sample_spaces: list[Space]) -> list[User]:
     return [
         User(
             id="user_01",
-            username="alice",
             member_spaces={sample_spaces[0].id, sample_spaces[1].id},
             editor_spaces=set(),
         ),
         User(
             id="user_02",
-            username="bob",
             member_spaces={sample_spaces[1].id},
             editor_spaces={sample_spaces[2].id},
         ),
         User(
             id="user_03",
-            username="charlie",
             member_spaces={sample_spaces[0].id, sample_spaces[2].id},
             editor_spaces=set(),
         ),
@@ -82,30 +73,21 @@ def sample_perspectives(sample_spaces: list[Space]) -> list[Perspective]:
     return [
         Perspective(
             id="perspective_01",
-            name="Perspective 1",
             space_id=sample_spaces[1].id,
             entity_id="entity_01",
-            description="First perspective",
             created_at=now,
-            updated_at=now,
         ),
         Perspective(
             id="perspective_02",
-            name="Perspective 2",
             space_id=sample_spaces[2].id,
             entity_id="entity_01",
-            description="Second perspective for entity 1",
             created_at=now,
-            updated_at=now,
         ),
         Perspective(
             id="perspective_03",
-            name="Perspective 3",
             space_id=sample_spaces[1].id,
             entity_id="entity_02",
-            description="Perspective for entity 2",
             created_at=now,
-            updated_at=now,
         ),
     ]
 
@@ -116,9 +98,7 @@ def sample_entities(sample_perspectives: list[Perspective]) -> list[Entity]:
     now = datetime.now()
     entity1 = Entity(
         id="entity_01",
-        name="Entity One",
         created_at=now,
-        updated_at=now,
     )
     entity1.perspectives = [
         p for p in sample_perspectives if p.entity_id == "entity_01"
@@ -126,9 +106,7 @@ def sample_entities(sample_perspectives: list[Perspective]) -> list[Entity]:
 
     entity2 = Entity(
         id="entity_02",
-        name="Entity Two",
         created_at=now,
-        updated_at=now,
     )
     entity2.perspectives = [
         p for p in sample_perspectives if p.entity_id == "entity_02"
@@ -183,6 +161,7 @@ def ranking_engine() -> RankingEngine:
     config = RankingConfig(
         use_activity_metrics=True,
         filter_non_members=False,
+        normalization_method="min_max",
     )
     return RankingEngine(config)
 
@@ -231,12 +210,14 @@ class TestRankEntitiesAPI:
             spaces=sample_spaces,
         )
 
+        # Entity scores could be greater than 1
         for entity in result:
             # Check that score fields exist and are numeric
             assert hasattr(entity, "raw_score")
             assert hasattr(entity, "normalized_score")
             assert isinstance(entity.raw_score, (int, float))
             assert isinstance(entity.normalized_score, (int, float))
+            assert entity.normalized_score >= 0
 
     def test_rank_entities_populates_perspective_scores(
         self,
@@ -263,6 +244,8 @@ class TestRankEntitiesAPI:
                 assert hasattr(perspective, "normalized_score")
                 assert isinstance(perspective.raw_score, (int, float))
                 assert isinstance(perspective.normalized_score, (int, float))
+                assert perspective.normalized_score >= 0
+                assert perspective.normalized_score <= 1
 
     def test_rank_entities_with_empty_inputs(
         self,
@@ -345,6 +328,8 @@ class TestRankSpacesAPI:
             assert hasattr(space, "activity_score")
             assert isinstance(space.space_score, (int, float))
             assert isinstance(space.activity_score, (int, float))
+            assert space.space_score >= 0
+            assert space.space_score <= 1
 
     def test_rank_spaces_with_empty_inputs(
         self,
