@@ -175,7 +175,7 @@ class TestRankingDataProvider:
                 # perspectives query
                 [("entity-1", "space-1"), ("entity-1", "space-2")],
                 # entities query
-                [("entity-1", "1762992995")],
+                [("entity-1", "1765466943")],
             ]
 
             provider = RankingDataProvider("postgresql://test:test@localhost/test")
@@ -198,18 +198,18 @@ class TestRankingDataProvider:
             mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
             mock_cursor.fetchall.return_value = [
-                ("entity-1", "1762992995"),
-                ("entity-2", "1762992995"),
+                ("entity-1", "1765466943"),
+                ("entity-2", "1765466943"),
             ]
 
             provider = RankingDataProvider("postgresql://test:test@localhost/test")
             entities = provider._fetch_entities(mock_conn)
 
             assert len(entities) == 2
-            # Unix timestamp 1762992995 = Nov 12, 2025 (local time)
+            # Unix timestamp 1765466943 = December 11, 2025
             assert entities[0].created_at.year == 2025
-            assert entities[0].created_at.month == 11
-            assert entities[0].created_at.day == 12
+            assert entities[0].created_at.month == 12
+            assert entities[0].created_at.day == 11
 
     def test_empty_database_returns_empty_lists(self) -> None:
         """Test that empty database returns empty lists."""
