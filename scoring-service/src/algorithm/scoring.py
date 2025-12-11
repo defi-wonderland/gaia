@@ -278,6 +278,7 @@ class RankingEngine:
             entity.raw_score = sum(p.raw_score for p in entity.perspectives)
             entity.contestation_score = sum(p.contestation_score for p in entity.perspectives)
 
+        # TODO: should updating an entity reduce it's time decay?
         # Step 3: Apply time decay to entity raw scores if enabled
         if self.config.use_time_decay:
             for entity in entities:
