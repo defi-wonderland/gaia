@@ -29,7 +29,6 @@ class User:
     """Represents a user in the system."""
 
     id: str
-    username: str
     member_spaces: set[str] = field(default_factory=set)
     editor_spaces: set[str] = field(default_factory=set)
 
@@ -51,12 +50,9 @@ class Perspective:
     """Represents a perspective on an entity."""
 
     id: str
-    name: str
     space_id: str
     entity_id: str
-    description: str
     created_at: datetime
-    updated_at: datetime
     version: int = 1
 
     # Computed fields (not stored in DB)
@@ -94,9 +90,7 @@ class Entity:
     """Represents an entity that can be voted on."""
 
     id: str
-    name: str
     created_at: datetime
-    updated_at: datetime
     perspective_ids: list[str] = field(default_factory=list)
     perspectives: list[Perspective] = field(default_factory=list)
     version: int = 1
@@ -139,8 +133,6 @@ class Space:
     """Represents a space that contains entities."""
 
     id: str
-    name: str
-    description: str
     created_at: datetime
     parent_space_id: str | None = None
     subspace_ids: set[str] = field(default_factory=set)
