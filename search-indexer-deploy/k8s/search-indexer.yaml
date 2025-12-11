@@ -47,9 +47,27 @@ spec:
             # Index version (defaults to 0 if not set)
             - name: ENTITIES_INDEX_VERSION
               value: "0"
-            # Kafka connection (Kafka is in kafka namespace)
+            # Kafka connection (managed Kafka with SSL)
             - name: KAFKA_BROKER
-              value: "kafka-broker-0.broker.kafka.svc.cluster.local:29092"
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials
+                  key: KAFKA_BROKER
+            - name: KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials
+                  key: KAFKA_USERNAME
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials
+                  key: KAFKA_PASSWORD
+            - name: KAFKA_SSL_CA_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials
+                  key: KAFKA_SSL_CA_PEM
             - name: KAFKA_GROUP_ID
               value: "search-indexer"
             # Logging
@@ -60,7 +78,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: search-indexer-secrets
-                  key: axiom-token
+                  key: AXIOM_TOKEN
                   optional: true
             - name: AXIOM_DATASET
               value: "gaia.search-indexer"
@@ -104,5 +122,5 @@ metadata:
   namespace: search
 type: Opaque
 stringData:
-  axiom-token: ""  # Set via kubectl or CI/CD
+  AXIOM_TOKEN: ""  # Set via kubectl or CI/CD
 

@@ -36,15 +36,15 @@ The Kubernetes manifests are in `k8s/`.
 
 ### Prerequisites
 
-Before deploying, you must create the Grafana credentials secret:
+Before deploying, create the required secrets in the `search` namespace:
 
-```bash
-# Create the secret with your desired credentials
-kubectl create secret generic grafana-credentials \
-  --from-literal=admin-user=<your-username> \
-  --from-literal=admin-password=<your-secure-password> \
-  --namespace=search
-```
+| Secret | Keys | Description |
+|--------|------|-------------|
+| `kafka-credentials` | `KAFKA_BROKER`, `KAFKA_USERNAME`, `KAFKA_PASSWORD`, `KAFKA_SSL_CA_PEM` | Managed Kafka connection (see [hermes README](../hermes/README.md) for details) |
+| `grafana-credentials` | `ADMIN_USER`, `ADMIN_PASSWORD` | Grafana admin login |
+| `search-indexer-secrets` | `AXIOM_TOKEN` | Optional, for Axiom logging |
+
+See [k8s-secrets-isolation.md](../docs/k8s-secrets-isolation.md) for the secrets strategy.
 
 ### Manual Deployment
 
@@ -132,6 +132,9 @@ The search-indexer binary uses these environment variables:
 |----------|-------------|---------|
 | `OPENSEARCH_URL` | OpenSearch REST endpoint | `http://localhost:9200` |
 | `KAFKA_BROKER` | Kafka broker address | `localhost:9092` |
+| `KAFKA_USERNAME` | Kafka SASL username (required for managed Kafka) | - |
+| `KAFKA_PASSWORD` | Kafka SASL password (required for managed Kafka) | - |
+| `KAFKA_SSL_CA_PEM` | Kafka CA certificate PEM (required for managed Kafka with SSL) | - |
 | `KAFKA_GROUP_ID` | Consumer group ID | `search-indexer` |
 | `RUST_LOG` | Log level | `search_indexer=info` |
 | `AXIOM_TOKEN` | Axiom API token (optional) | - |

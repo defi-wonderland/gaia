@@ -262,12 +262,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: grafana-credentials
-                  key: admin-user
+                  key: ADMIN_USER
             - name: GF_SECURITY_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: grafana-credentials
-                  key: admin-password
+                  key: ADMIN_PASSWORD
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
           volumeMounts:
