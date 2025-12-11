@@ -6,6 +6,11 @@ from datetime import datetime
 import numpy as np
 
 from .models import Entity, RankingConfig, Space, User, Vote
+
+# Constants
+HOT_SCORE_TIME_DIVISOR = 45000  # Time divisor for hot score calculation
+ACTIVITY_WEIGHT = 0.1           # Activity weight in composite space score (10%)
+
 from .utils import calculate_space_distances
 
 
@@ -55,7 +60,7 @@ class EntityScorer:
         age_hours = (datetime.now() - entity.created_at).total_seconds() / 3600
 
         # Apply hot score formula
-        hot_score = math.log(max(abs(vote_difference), 1)) + age_hours / 45000
+        hot_score = math.log(max(abs(vote_difference), 1)) + age_hours / HOT_SCORE_TIME_DIVISOR
 
         return hot_score
 
@@ -232,7 +237,7 @@ class SpaceScorer:
         activity_score = self.calculate_activity_score(space, entities)
 
         # Combine scores (can be weighted)
-        composite_score = stake_score + (activity_score * 0.1)  # Activity weighted at 10%
+        composite_score = stake_score + (activity_score * ACTIVITY_WEIGHT)
 
         return composite_score
 

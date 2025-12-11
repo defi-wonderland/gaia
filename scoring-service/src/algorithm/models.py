@@ -6,6 +6,11 @@ from enum import Enum
 
 import numpy as np
 
+DEFAULT_ROOT_SPACE_ID = "space_00"  # Default root space identifier
+SPACE_SCORE_DECAY_BASE = 0.8        # Base for space score decay calculation
+DISCONNECTED_SPACE_DEPTH = 11       # Depth used for disconnected spaces (no path to root)
+MAX_SPACE_DEPTH = 10                # Maximum depth for parent traversal
+
 __all__ = [
     "VoteType",
     "User",
@@ -149,16 +154,16 @@ class Space:
         entities: list[Entity],
         users: list[User],
         spaces: list["Space"],
-        root_space_id: str = "space_00",
+        root_space_id: str = DEFAULT_ROOT_SPACE_ID,
     ) -> None:
         """Calculate space score based on distance from root (GEO)."""
         self.distance_to_root = self._calculate_distance_to_root(spaces, root_space_id)
 
         # Calculate space score based on distance to root
         if self.distance_to_root > 0:
-            self.space_score = 0.8**self.distance_to_root
+            self.space_score = SPACE_SCORE_DECAY_BASE**self.distance_to_root
         else:
-            self.space_score = 0.8**11
+            self.space_score = SPACE_SCORE_DECAY_BASE**DISCONNECTED_SPACE_DEPTH
 
         self.member_count = sum(
             1 for user in users if self.id in user.member_spaces or self.id in user.editor_spaces
@@ -168,7 +173,7 @@ class Space:
         )
 
     def _calculate_distance_to_root(
-        self, spaces: list["Space"], root_space_id: str, max_depth: int = 10
+        self, spaces: list["Space"], root_space_id: str, max_depth: int = MAX_SPACE_DEPTH
     ) -> int:
         """Calculate the number of hops from this space to the root space."""
         if self.id == root_space_id:
