@@ -304,7 +304,7 @@ class RankingEngine:
                             space.space_score
                         )
             else:
-                entity.normalized_score = -1
+                entity.normalized_score = 0
 
         # Step 6: The weighted scores are already normalized at the perspective level
         # No additional entity-level normalization needed - the weighted sum is the final score
