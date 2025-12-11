@@ -188,6 +188,7 @@ class Space:
         # Build space lookup for parent traversal
         space_lookup = {space.id: space for space in spaces}
 
+        # FIXME: we should support multi-parent space-subspace relations
         # Calculate distance with depth protection
         distance = 1
         current_space_id: str | None = self.parent_space_id
