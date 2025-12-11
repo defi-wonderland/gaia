@@ -13,6 +13,9 @@ members = [
     "actions-indexer-repository",
     "actions-substream",
 
+    "search-indexer-shared",
+    "search-indexer-repository",
+
     "hermes-schema",
     "hermes-processor",
     "hermes-relay",
