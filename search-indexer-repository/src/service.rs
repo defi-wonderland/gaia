@@ -34,10 +34,11 @@ use uuid::Uuid;
 ///
 /// ```no_run
 /// use search_indexer_repository::{SearchIndexService, SearchIndexProvider};
-/// use search_indexer_repository::opensearch::OpenSearchProvider;
-/// use search_indexer_repository::types::UpdateEntityRequest;
+/// use search_indexer_repository::opensearch::{OpenSearchProvider, IndexConfig};
+/// use search_indexer_repository::UpdateEntityRequest;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = IndexConfig::new("entities", 0);
 /// let provider = Box::new(OpenSearchProvider::new("http://localhost:9200", config).await?);
 /// let service = SearchIndexService::new(provider);
 ///
@@ -45,7 +46,12 @@ use uuid::Uuid;
 ///     entity_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
 ///     space_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8".to_string(),
 ///     name: Some("My Entity".to_string()),
-///     ..Default::default()
+///     description: None,
+///     avatar: None,
+///     cover: None,
+///     entity_global_score: None,
+///     space_score: None,
+///     entity_space_score: None,
 /// };
 ///
 /// // This will create the document if it doesn't exist, or update it if it does

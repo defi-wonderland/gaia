@@ -21,13 +21,13 @@ use crate::errors::SearchIndexError;
 ///
 /// # Example
 ///
-/// ```no_run
-/// use search_indexer_repository::utils::parse_entity_and_space_ids;
+/// ```
+/// use search_indexer_repository::parse_entity_and_space_ids;
 ///
 /// let (entity_id, space_id) = parse_entity_and_space_ids(
 ///     "550e8400-e29b-41d4-a716-446655440000",
 ///     "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-/// )?;
+/// ).expect("valid UUIDs");
 /// ```
 pub fn parse_entity_and_space_ids(
     entity_id_str: &str,
@@ -59,10 +59,7 @@ mod tests {
 
     #[test]
     fn test_parse_entity_and_space_ids_invalid_entity() {
-        let result = parse_entity_and_space_ids(
-            "invalid",
-            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-        );
+        let result = parse_entity_and_space_ids("invalid", "6ba7b810-9dad-11d1-80b4-00c04fd430c8");
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -72,10 +69,7 @@ mod tests {
 
     #[test]
     fn test_parse_entity_and_space_ids_invalid_space() {
-        let result = parse_entity_and_space_ids(
-            "550e8400-e29b-41d4-a716-446655440000",
-            "invalid",
-        );
+        let result = parse_entity_and_space_ids("550e8400-e29b-41d4-a716-446655440000", "invalid");
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -83,4 +77,3 @@ mod tests {
         ));
     }
 }
-
