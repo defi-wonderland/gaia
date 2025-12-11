@@ -6,7 +6,8 @@ from enum import Enum
 
 import numpy as np
 
-DEFAULT_ROOT_SPACE_ID = "space_00"  # Default root space identifier
+from src.constants import ROOT_SPACE_ID
+
 SPACE_SCORE_DECAY_BASE = 0.8        # Base for space score decay calculation
 DISCONNECTED_SPACE_DEPTH = 11       # Depth used for disconnected spaces (no path to root)
 MAX_SPACE_DEPTH = 10                # Maximum depth for parent traversal
@@ -154,7 +155,7 @@ class Space:
         entities: list[Entity],
         users: list[User],
         spaces: list["Space"],
-        root_space_id: str = DEFAULT_ROOT_SPACE_ID,
+        root_space_id: str = ROOT_SPACE_ID,
     ) -> None:
         """Calculate space score based on distance from root (GEO)."""
         self.distance_to_root = self._calculate_distance_to_root(spaces, root_space_id)
