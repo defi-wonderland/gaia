@@ -114,13 +114,12 @@ class ScoringDataProvider:
 
         # Build Space objects - all spaces are children of the root space
         spaces = []
-        subspace_ids: set[str] = set()
 
-        non_root_spaces = [space_id for (space_id,) in space_rows if space_id != ROOT_SPACE_ID]
+        non_root_spaces = {str(space_id) for (space_id,) in space_rows if space_id != ROOT_SPACE_ID}
 
         for (space_id,) in space_rows:
             space_id_str = str(space_id)
-            sub_space_ids = non_root_spaces if space_id == ROOT_SPACE_ID else []
+            sub_space_ids = non_root_spaces if space_id == ROOT_SPACE_ID else set()
             parent_space_id = None if space_id == ROOT_SPACE_ID else ROOT_SPACE_ID
             spaces.append(
                 Space(
