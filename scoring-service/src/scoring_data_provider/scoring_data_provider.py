@@ -1,4 +1,4 @@
-"""RankingDataProvider module for fetching and aggregating ranking data from PostgreSQL."""
+"""ScoringDataProvider module for fetching and aggregating scoring data from PostgreSQL."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,8 +9,8 @@ from src.algorithm.models import Entity, Perspective, Space, User, Vote, VoteTyp
 from src.constants import ROOT_SPACE_ID
 
 @dataclass
-class RankingData:
-    """Aggregated data for ranking."""
+class ScoringData:
+    """Aggregated data for scoring."""
 
     entities: list[Entity]
     votes: list[Vote]
@@ -18,22 +18,22 @@ class RankingData:
     spaces: list[Space]
 
 
-class RankingDataProvider:
-    """Fetches and aggregates data from PostgreSQL for the ranking engine."""
+class ScoringDataProvider:
+    """Fetches and aggregates data from PostgreSQL for the scoring engine."""
 
     def __init__(self, connection_string: str):
-        """Initialize the RankingDataProvider with a database connection string.
+        """Initialize the ScoringDataProvider with a database connection string.
 
         Args:
             connection_string: PostgreSQL connection string (e.g., "postgresql://user:pass@host/db")
         """
         self._connection_string = connection_string
 
-    def fetch_all(self) -> RankingData:
-        """Fetch all data required for ranking.
+    def fetch_all(self) -> ScoringData:
+        """Fetch all data required for scoring.
 
         Returns:
-            RankingData containing entities, votes, users, and spaces.
+            ScoringData containing entities, votes, users, and spaces.
         """
         with psycopg.connect(self._connection_string) as conn:
             spaces = self._fetch_spaces(conn)
@@ -43,7 +43,7 @@ class RankingDataProvider:
             entities = self._fetch_entities(conn)
             entities = self._build_entities_with_perspectives(entities, perspectives)
 
-        return RankingData(
+        return ScoringData(
             entities=entities,
             votes=votes,
             users=users,

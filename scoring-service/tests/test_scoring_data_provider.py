@@ -1,4 +1,4 @@
-"""Unit tests for the RankingDataProvider module."""
+"""Unit tests for the ScoringDataProvider module."""
 
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -7,15 +7,15 @@ import pytest
 
 from src.algorithm.models import VoteType
 from src.constants import ROOT_SPACE_ID
-from src.ranking_data_provider import RankingDataProvider, RankingData
+from src.scoring_data_provider import ScoringDataProvider, ScoringData
 
 
-class TestRankingDataProvider:
-    """Tests for the RankingDataProvider class."""
+class TestScoringDataProvider:
+    """Tests for the ScoringDataProvider class."""
 
-    def test_fetch_all_returns_ranking_data(self) -> None:
-        """Test that fetch_all returns a RankingData object with all data."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+    def test_fetch_all_returns_scoring_data(self) -> None:
+        """Test that fetch_all returns a ScoringData object with all data."""
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             # Setup mock connection and cursor
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
@@ -41,10 +41,10 @@ class TestRankingDataProvider:
                 [("entity-1", "1762992995")],
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             result = provider.fetch_all()
 
-            assert isinstance(result, RankingData)
+            assert isinstance(result, ScoringData)
             assert len(result.spaces) == 3
             assert len(result.users) == 3
             assert len(result.votes) == 2
@@ -52,7 +52,7 @@ class TestRankingDataProvider:
 
     def test_fetch_spaces_with_subspace_relationships(self) -> None:
         """Test that spaces are fetched with correct parent/child relationships."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -63,7 +63,7 @@ class TestRankingDataProvider:
                 [("space-parent",), ("space-child",), (ROOT_SPACE_ID,)],
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             spaces = provider._fetch_spaces(mock_conn)
 
             assert len(spaces) == 3
@@ -79,7 +79,7 @@ class TestRankingDataProvider:
 
     def test_fetch_users_aggregates_memberships(self) -> None:
         """Test that users are aggregated with both member and editor spaces."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -92,7 +92,7 @@ class TestRankingDataProvider:
                 [("0xUser1", "space-3")],
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             users = provider._fetch_users(mock_conn)
 
             assert len(users) == 1
@@ -105,7 +105,7 @@ class TestRankingDataProvider:
 
     def test_fetch_votes_maps_vote_types(self) -> None:
         """Test that vote types are correctly mapped."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -117,7 +117,7 @@ class TestRankingDataProvider:
                 ("0xuser3", "entity-1", "space-1", 99, datetime(2024, 1, 3)),  # Invalid
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             votes = provider._fetch_votes(mock_conn)
 
             # Should only have 2 valid votes (invalid vote_type=99 is skipped)
@@ -131,7 +131,7 @@ class TestRankingDataProvider:
 
     def test_fetch_perspectives_creates_unique_pairs(self) -> None:
         """Test that perspectives are created from unique entity_id, space_id pairs."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -143,7 +143,7 @@ class TestRankingDataProvider:
                 ("entity-2", "space-1"),
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             perspectives = provider._fetch_perspectives(mock_conn)
 
             assert len(perspectives) == 3
@@ -156,7 +156,7 @@ class TestRankingDataProvider:
 
     def test_build_entities_with_perspectives(self) -> None:
         """Test that perspectives are correctly attached to entities."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -178,7 +178,7 @@ class TestRankingDataProvider:
                 [("entity-1", "1765466943")],
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             result = provider.fetch_all()
 
             entity = result.entities[0]
@@ -191,7 +191,7 @@ class TestRankingDataProvider:
 
     def test_fetch_entities_parses_unix_timestamp(self) -> None:
         """Test that entity created_at is correctly parsed from Unix timestamp."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -202,7 +202,7 @@ class TestRankingDataProvider:
                 ("entity-2", "1765466943"),
             ]
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             entities = provider._fetch_entities(mock_conn)
 
             assert len(entities) == 2
@@ -213,7 +213,7 @@ class TestRankingDataProvider:
 
     def test_empty_database_returns_empty_lists(self) -> None:
         """Test that empty database returns empty lists."""
-        with patch("src.ranking_data_provider.ranking_data_provider.psycopg.connect") as mock_connect:
+        with patch("src.scoring_data_provider.scoring_data_provider.psycopg.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_connect.return_value.__enter__.return_value = mock_conn
@@ -222,7 +222,7 @@ class TestRankingDataProvider:
             # All queries return empty
             mock_cursor.fetchall.return_value = []
 
-            provider = RankingDataProvider("postgresql://test:test@localhost/test")
+            provider = ScoringDataProvider("postgresql://test:test@localhost/test")
             result = provider.fetch_all()
 
             assert result.entities == []
