@@ -30,13 +30,14 @@ class ScoringDataWriter:
         Raises:
             psycopg.Error: If any database operation fails (all changes are rolled back).
         """
+        now = datetime.now()
         with psycopg.connect(self._connection_string) as conn:
             with conn.transaction():
-                self._write_global_scores(conn, entities)
-                self._write_local_scores(conn, entities)
-                self._write_space_scores(conn, spaces)
+                self._write_global_scores(conn, entities, now)
+                self._write_local_scores(conn, entities, now)
+                self._write_space_scores(conn, spaces, now)
 
-    def _write_global_scores(self, conn: psycopg.Connection, entities: list[Entity]) -> None:
+    def _write_global_scores(self, conn: psycopg.Connection, entities: list[Entity], now: datetime) -> None:
         """Batch write entity.normalized_score to global_scores table.
 
         Args:
@@ -45,8 +46,6 @@ class ScoringDataWriter:
         """
         if not entities:
             return
-
-        now = datetime.now()
         data = [(e.id, e.normalized_score, now) for e in entities]
 
         with conn.cursor() as cur:
@@ -61,7 +60,7 @@ class ScoringDataWriter:
                 data,
             )
 
-    def _write_local_scores(self, conn: psycopg.Connection, entities: list[Entity]) -> None:
+    def _write_local_scores(self, conn: psycopg.Connection, entities: list[Entity], now: datetime) -> None:
         """Batch write perspective.normalized_score to local_scores table.
 
         Args:
@@ -70,7 +69,6 @@ class ScoringDataWriter:
         """
         # Flatten all perspectives from all entities
         data = []
-        now = datetime.now()
 
         for entity in entities:
             for perspective in entity.perspectives:
@@ -96,7 +94,7 @@ class ScoringDataWriter:
                 data,
             )
 
-    def _write_space_scores(self, conn: psycopg.Connection, spaces: list[Space]) -> None:
+    def _write_space_scores(self, conn: psycopg.Connection, spaces: list[Space], now: datetime) -> None:
         """Batch write space.space_score to space_scores table.
 
         Args:
@@ -106,7 +104,6 @@ class ScoringDataWriter:
         if not spaces:
             return
 
-        now = datetime.now()
         data = [(s.id, s.space_score, now) for s in spaces]
 
         with conn.cursor() as cur:

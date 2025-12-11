@@ -1,7 +1,7 @@
 """Unit tests for the ScoringDataWriter module."""
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import ANY, MagicMock, patch, call
 
 import pytest
 
@@ -43,9 +43,9 @@ class TestScoringDataWriter:
 
                 writer.write_all([entity], [space])
 
-                mock_global.assert_called_once_with(mock_conn, [entity])
-                mock_local.assert_called_once_with(mock_conn, [entity])
-                mock_space.assert_called_once_with(mock_conn, [space])
+                mock_global.assert_called_once_with(mock_conn, [entity], ANY)
+                mock_local.assert_called_once_with(mock_conn, [entity], ANY)
+                mock_space.assert_called_once_with(mock_conn, [space], ANY)
 
     def test_write_global_scores_inserts_entity_scores(self) -> None:
         """Test that _write_global_scores inserts entity normalized scores."""
@@ -63,7 +63,8 @@ class TestScoringDataWriter:
             entity2 = Entity(id="entity-2", created_at=datetime.now())
             entity2.normalized_score = 0.75
 
-            writer._write_global_scores(mock_conn, [entity1, entity2])
+            now = datetime.now()
+            writer._write_global_scores(mock_conn, [entity1, entity2], now)
 
             # Verify executemany was called
             mock_cursor.executemany.assert_called_once()
@@ -110,7 +111,8 @@ class TestScoringDataWriter:
             entity = Entity(id="entity-1", created_at=datetime.now())
             entity.perspectives = [perspective1, perspective2]
 
-            writer._write_local_scores(mock_conn, [entity])
+            now = datetime.now()
+            writer._write_local_scores(mock_conn, [entity], now)
 
             # Verify executemany was called
             mock_cursor.executemany.assert_called_once()
@@ -146,7 +148,8 @@ class TestScoringDataWriter:
             space2 = Space(id="space-2", created_at=datetime.now())
             space2.space_score = 0.64
 
-            writer._write_space_scores(mock_conn, [space1, space2])
+            now = datetime.now()
+            writer._write_space_scores(mock_conn, [space1, space2], now)
 
             # Verify executemany was called
             mock_cursor.executemany.assert_called_once()
@@ -173,7 +176,8 @@ class TestScoringDataWriter:
             mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
             writer = ScoringDataWriter("postgresql://test:test@localhost/test")
-            writer._write_global_scores(mock_conn, [])
+            now = datetime.now()
+            writer._write_global_scores(mock_conn, [], now)
 
             # Should not call executemany for empty list
             mock_cursor.executemany.assert_not_called()
@@ -191,7 +195,8 @@ class TestScoringDataWriter:
             entity = Entity(id="entity-1", created_at=datetime.now())
             entity.perspectives = []
 
-            writer._write_local_scores(mock_conn, [entity])
+            now = datetime.now()
+            writer._write_local_scores(mock_conn, [entity], now)
 
             # Should not call executemany for empty perspectives
             mock_cursor.executemany.assert_not_called()
@@ -205,7 +210,8 @@ class TestScoringDataWriter:
             mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
             writer = ScoringDataWriter("postgresql://test:test@localhost/test")
-            writer._write_space_scores(mock_conn, [])
+            now = datetime.now()
+            writer._write_space_scores(mock_conn, [], now)
 
             # Should not call executemany for empty list
             mock_cursor.executemany.assert_not_called()
