@@ -115,6 +115,40 @@ services:
     mem_limit: 1g
     mem_reservation: 750m
 
+  search-indexer:
+    build:
+      context: ..
+      dockerfile: search-indexer/Dockerfile
+    container_name: search-indexer
+    user: "1000:1000"
+    environment:
+      - OPENSEARCH_URL=http://opensearch:9200
+      # Index alias (defaults to "entities" if not set)
+      - INDEX_ALIAS=${INDEX_ALIAS:-entities}
+      # Index version (defaults to 0 if not set)
+      - ENTITIES_INDEX_VERSION=${ENTITIES_INDEX_VERSION:-0}
+      # Connect to Kafka broker - defaults to hermes kafka container name
+      # Override with KAFKA_BROKER env var if needed
+      - KAFKA_BROKER=${KAFKA_BROKER:-kafka:29092}
+      - KAFKA_GROUP_ID=search-indexer
+      - OPENSEARCH_CONNECTION_MODE=retry
+      - OPENSEARCH_RETRY_INTERVAL_SECS=15
+      - RUST_LOG=info
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    # Connect to hermes network to access Kafka broker
+    networks:
+      - default
+      - hermes_default
+    restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 512m
+
+networks:
+  hermes_default:
+    external: true
+
 volumes:
   opensearch-data:
   prometheus-data:

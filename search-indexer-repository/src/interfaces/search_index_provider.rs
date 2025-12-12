@@ -24,8 +24,23 @@ use crate::types::{
 /// There is no separate `create_document` function because all grc-20 events are edits (updates).
 /// The `update_document` function performs an upsert operation: it will create the document if
 /// it doesn't exist, or update it if it does exist.
+///
+/// # Index Initialization
+///
+/// Implementations should call `ensure_index_exists` during application startup to ensure
+/// the search index and any aliases are properly configured before performing document operations.
 #[async_trait]
 pub trait SearchIndexProvider: Send + Sync {
+    /// Ensure the search index and any required aliases exist, creating them if necessary.
+    ///
+    /// This method should be called during application startup to ensure the backend
+    /// is properly initialized before performing document operations.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the index is ready for use
+    /// * `Err(SearchIndexError)` - If initialization fails
+    async fn ensure_index_exists(&self) -> Result<(), SearchIndexError>;
     /// Update specific fields of a document, creating it if it doesn't exist (upsert).
     ///
     /// This function performs an upsert operation: if the document exists, only fields that are

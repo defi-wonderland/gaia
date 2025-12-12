@@ -6,16 +6,17 @@
 use async_trait::async_trait;
 use opensearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
+    indices::{IndicesCreateParts, IndicesExistsParts, IndicesGetAliasParts},
     DeleteParts, OpenSearch, UpdateParts,
 };
-use serde_json::json;
-use tracing::{debug, error, info};
+use serde_json::{json, Value};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 use uuid::Uuid;
 
 use crate::errors::SearchIndexError;
 use crate::interfaces::SearchIndexProvider;
-use crate::opensearch::index_config::IndexConfig;
+use crate::opensearch::index_config::{get_index_settings, get_versioned_index_name, IndexConfig};
 use crate::types::{
     BatchOperationResult, BatchOperationSummary, DeleteEntityRequest, UnsetEntityPropertiesRequest,
     UpdateEntityRequest,
@@ -168,6 +169,181 @@ impl OpenSearchProvider {
 
 #[async_trait]
 impl SearchIndexProvider for OpenSearchProvider {
+    /// Ensure the versioned index and alias exist, creating them if necessary.
+    ///
+    /// This method performs the following steps:
+    /// 1. Check if the versioned index (e.g., "entities_v0") exists; create it if not
+    /// 2. Check if the alias (e.g., "entities") exists and points to the correct index
+    /// 3. Create or update the alias to point to the versioned index
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the index and alias are ready for use
+    /// * `Err(SearchIndexError)` - If index or alias operations fail
+    #[instrument(skip(self))]
+    async fn ensure_index_exists(&self) -> Result<(), SearchIndexError> {
+        // Get the versioned index name (e.g., "entities_v0")
+        let versioned_index_name = get_versioned_index_name(Some(self.index_config.version));
+
+        // Step 1: Ensure the versioned index exists
+        let index_exists_response = self
+            .client
+            .indices()
+            .exists(IndicesExistsParts::Index(&[&versioned_index_name]))
+            .send()
+            .await
+            .map_err(|e| SearchIndexError::connection(e.to_string()))?;
+
+        if !index_exists_response.status_code().is_success() {
+            info!(index = %versioned_index_name, "Creating versioned index");
+
+            let settings = get_index_settings(Some(self.index_config.version));
+
+            let create_response = self
+                .client
+                .indices()
+                .create(IndicesCreateParts::Index(&versioned_index_name))
+                .body(settings)
+                .send()
+                .await
+                .map_err(|e| SearchIndexError::index_creation(e.to_string()))?;
+
+            let status = create_response.status_code();
+            if !status.is_success() {
+                let error_body = create_response.text().await.unwrap_or_default();
+                error!(status = %status, body = %error_body, "Index creation failed");
+                return Err(SearchIndexError::index_creation(format!(
+                    "Index creation failed with status {}: {}",
+                    status, error_body
+                )));
+            }
+
+            info!(index = %versioned_index_name, "Versioned index created successfully");
+        } else {
+            debug!(index = %versioned_index_name, "Versioned index already exists");
+        }
+
+        // Step 2: Check if alias exists and create/update it
+        // Use get_alias to check if alias exists and what it points to
+        let get_alias_response = self
+            .client
+            .indices()
+            .get_alias(IndicesGetAliasParts::Name(&[&self.index_config.alias]))
+            .send()
+            .await;
+
+        let alias_exists = get_alias_response.is_ok()
+            && get_alias_response
+                .as_ref()
+                .unwrap()
+                .status_code()
+                .is_success();
+
+        if !alias_exists {
+            // Alias doesn't exist, create it
+            info!(alias = %self.index_config.alias, index = %versioned_index_name, "Creating alias");
+
+            let actions = json!({
+                "actions": [
+                    {
+                        "add": {
+                            "index": versioned_index_name,
+                            "alias": self.index_config.alias
+                        }
+                    }
+                ]
+            });
+
+            let update_response = self
+                .client
+                .indices()
+                .update_aliases()
+                .body(actions)
+                .send()
+                .await
+                .map_err(|e| SearchIndexError::index_creation(e.to_string()))?;
+
+            let status = update_response.status_code();
+            if !status.is_success() {
+                let error_body = update_response.text().await.unwrap_or_default();
+                error!(status = %status, body = %error_body, "Alias creation failed");
+                return Err(SearchIndexError::index_creation(format!(
+                    "Alias creation failed with status {}: {}",
+                    status, error_body
+                )));
+            }
+
+            info!(alias = %self.index_config.alias, index = %versioned_index_name, "Alias created successfully");
+        } else {
+            // Alias exists, check if it points to the correct index
+            let alias_body: Value = get_alias_response
+                .unwrap()
+                .json()
+                .await
+                .map_err(|e| SearchIndexError::parse(e.to_string()))?;
+
+            // Check if alias points to the versioned index
+            let points_to_correct_index = alias_body
+                .as_object()
+                .and_then(|obj| obj.get(&versioned_index_name))
+                .is_some();
+
+            if !points_to_correct_index {
+                // Update alias to point to the correct index
+                // First, remove alias from all indices it currently points to
+                warn!(
+                    alias = %self.index_config.alias,
+                    expected_index = %versioned_index_name,
+                    "Alias points to different index, updating"
+                );
+
+                let mut actions = Vec::new();
+                if let Some(indices) = alias_body.as_object() {
+                    for index_name in indices.keys() {
+                        actions.push(json!({
+                            "remove": {
+                                "index": index_name,
+                                "alias": self.index_config.alias
+                            }
+                        }));
+                    }
+                }
+                // Then add alias to the correct index
+                actions.push(json!({
+                    "add": {
+                        "index": versioned_index_name,
+                        "alias": self.index_config.alias
+                    }
+                }));
+
+                let update_response = self
+                    .client
+                    .indices()
+                    .update_aliases()
+                    .body(json!({ "actions": actions }))
+                    .send()
+                    .await
+                    .map_err(|e| SearchIndexError::index_creation(e.to_string()))?;
+
+                let status = update_response.status_code();
+                if !status.is_success() {
+                    let error_body = update_response.text().await.unwrap_or_default();
+                    error!(status = %status, body = %error_body, "Alias update failed");
+                    return Err(SearchIndexError::index_creation(format!(
+                        "Alias update failed with status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                info!(alias = %self.index_config.alias, index = %versioned_index_name, "Alias updated successfully");
+            } else {
+                debug!(alias = %self.index_config.alias, index = %versioned_index_name, "Alias already points to correct index");
+            }
+        }
+
+        Ok(())
+    }
+
     /// Update specific fields of a document, creating it if it doesn't exist (upsert).
     ///
     /// This function performs an upsert operation: if the document exists, only fields that are
