@@ -97,18 +97,18 @@ def main() -> None:
         sys.exit(1)
 
     config = RankingConfig(
-        use_contestation_score=os.environ.get("USE_CONTESTATION_SCORE", "True").lower() == "true",
+        use_contestation_score=os.environ.get("USE_CONTESTATION_SCORE", "False").lower() == "true",
         use_time_decay=os.environ.get("USE_TIME_DECAY", "False").lower() == "true",
         time_decay_factor=float(os.environ.get("TIME_DECAY_FACTOR", "0.1")),
         include_subspace_votes=os.environ.get("INCLUDE_SUBSPACE_VOTES", "False").lower() == "true",
-        use_activity_metrics=os.environ.get("USE_ACTIVITY_METRICS", "False").lower() == "true",
-        use_distance_weighting=os.environ.get("USE_DISTANCE_WEIGHTING", "False").lower() == "true",
+        use_activity_metrics=os.environ.get("USE_ACTIVITY_METRICS", "True").lower() == "true",
+        use_distance_weighting=os.environ.get("USE_DISTANCE_WEIGHTING", "True").lower() == "true",
         distance_weight_base=float(os.environ.get("DISTANCE_WEIGHT_BASE", "0.8")),
         max_distance=int(os.environ.get("MAX_DISTANCE", "10")),
         normalize_scores=os.environ.get("NORMALIZE_SCORES", "True").lower() == "true",
         normalization_method=os.environ.get("NORMALIZATION_METHOD", "z_score"),
-        filter_non_members=os.environ.get("FILTER_NON_MEMBERS", "True").lower() == "true",
-        require_space_membership=os.environ.get("REQUIRE_SPACE_MEMBERSHIP", "True").lower() == "true",
+        filter_non_members=os.environ.get("FILTER_NON_MEMBERS", "False").lower() == "true",
+        require_space_membership=os.environ.get("REQUIRE_SPACE_MEMBERSHIP", "False").lower() == "true",
     )
     engine = RankingEngine(config)
 

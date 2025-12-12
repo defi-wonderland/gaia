@@ -38,12 +38,12 @@ Copy `.env.example` to `.env` and configure the following variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `USE_CONTESTATION_SCORE` | `True` | Enable contestation scoring |
+| `USE_CONTESTATION_SCORE` | `False` | Enable contestation scoring |
 | `USE_TIME_DECAY` | `False` | Enable time-based score decay |
 | `TIME_DECAY_FACTOR` | `0.1` | Decay rate for time-based scoring |
 | `INCLUDE_SUBSPACE_VOTES` | `False` | Include votes from subspaces |
 | `USE_ACTIVITY_METRICS` | `True` | Factor in user activity |
-| `USE_DISTANCE_WEIGHTING` | `False` | Weight scores by graph distance |
+| `USE_DISTANCE_WEIGHTING` | `True` | Weight scores by graph distance |
 | `DISTANCE_WEIGHT_BASE` | `0.8` | Base weight for distance calculations |
 | `MAX_DISTANCE` | `10` | Maximum graph traversal distance |
 | `NORMALIZE_SCORES` | `True` | Normalize final scores |
