@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 class ScoringPipeline:
     """Scoring pipeline."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, engine: RankingEngine):
+        self.engine = engine
         self.database_url = database_url
         self.scoring_data: ScoringData | None = None
 
@@ -53,9 +54,7 @@ class ScoringPipeline:
     def _rank_spaces(self) -> None:
         """Rank spaces by their scores."""
         logger.info("Ranking spaces")
-        config = RankingConfig()
-        engine = RankingEngine(config)
-        self.scoring_data.spaces = engine.rank_spaces(
+        self.scoring_data.spaces = self.engine.rank_spaces(
             self.scoring_data.spaces,
             self.scoring_data.entities,
             self.scoring_data.users,
@@ -65,12 +64,10 @@ class ScoringPipeline:
     def _rank_entities(self) -> None:
         """Rank entities by their scores."""
         logger.info("Ranking entities")
-        config = RankingConfig()
-        engine = RankingEngine(config)
-        self.scoring_data.entities = engine.rank_entities(
+        self.scoring_data.entities = self.engine.rank_entities(
             self.scoring_data.entities,
             self.scoring_data.votes,
-            self.scoring_data.users,
+            self.scoring_data.users,    
             self.scoring_data.spaces,
         )
         logger.info("Ranked %d entities", len(self.scoring_data.entities))
@@ -99,8 +96,24 @@ def main() -> None:
         logger.error("DATABASE_URL environment variable is required")
         sys.exit(1)
 
+    config = RankingConfig(
+        use_contestation_score=os.environ.get("USE_CONTESTATION_SCORE", "True").lower() == "true",
+        use_time_decay=os.environ.get("USE_TIME_DECAY", "False").lower() == "true",
+        time_decay_factor=float(os.environ.get("TIME_DECAY_FACTOR", "0.1")),
+        include_subspace_votes=os.environ.get("INCLUDE_SUBSPACE_VOTES", "False").lower() == "true",
+        use_activity_metrics=os.environ.get("USE_ACTIVITY_METRICS", "False").lower() == "true",
+        use_distance_weighting=os.environ.get("USE_DISTANCE_WEIGHTING", "False").lower() == "true",
+        distance_weight_base=float(os.environ.get("DISTANCE_WEIGHT_BASE", "0.8")),
+        max_distance=int(os.environ.get("MAX_DISTANCE", "10")),
+        normalize_scores=os.environ.get("NORMALIZE_SCORES", "True").lower() == "true",
+        normalization_method=os.environ.get("NORMALIZATION_METHOD", "z_score"),
+        filter_non_members=os.environ.get("FILTER_NON_MEMBERS", "True").lower() == "true",
+        require_space_membership=os.environ.get("REQUIRE_SPACE_MEMBERSHIP", "True").lower() == "true",
+    )
+    engine = RankingEngine(config)
+
     try:
-        ScoringPipeline(database_url).run()
+        ScoringPipeline(database_url, engine).run()
     except Exception:
         logger.exception("Scoring pipeline failed")
         sys.exit(1)
