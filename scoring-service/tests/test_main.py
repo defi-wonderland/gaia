@@ -128,7 +128,6 @@ class TestScoringPipeline:
 
         with (
             patch("main.ScoringDataProvider") as mock_provider_class,
-            patch("main.RankingEngine") as mock_engine_class,
             patch("main.ScoringDataWriter") as mock_writer_class,
         ):
             mock_provider = MagicMock()
@@ -138,12 +137,11 @@ class TestScoringPipeline:
             mock_engine = MagicMock()
             mock_engine.rank_spaces.return_value = mock_spaces
             mock_engine.rank_entities.return_value = mock_entities
-            mock_engine_class.return_value = mock_engine
 
             mock_writer = MagicMock()
             mock_writer_class.return_value = mock_writer
 
-            pipeline = ScoringPipeline("postgresql://test/db")
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
             entity_count, space_count = pipeline.run()
 
             assert entity_count == 2
@@ -164,7 +162,6 @@ class TestScoringPipeline:
 
         with (
             patch("main.ScoringDataProvider") as mock_provider_class,
-            patch("main.RankingEngine") as mock_engine_class,
             patch("main.ScoringDataWriter") as mock_writer_class,
         ):
             mock_provider = MagicMock()
@@ -174,12 +171,11 @@ class TestScoringPipeline:
             mock_engine = MagicMock()
             mock_engine.rank_spaces.return_value = ranked_spaces
             mock_engine.rank_entities.return_value = ranked_entities
-            mock_engine_class.return_value = mock_engine
 
             mock_writer = MagicMock()
             mock_writer_class.return_value = mock_writer
 
-            pipeline = ScoringPipeline("postgresql://test/db")
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
             pipeline.run()
 
             # Verify scoring_data was updated with ranked results
@@ -200,7 +196,6 @@ class TestScoringPipeline:
 
         with (
             patch("main.ScoringDataProvider") as mock_provider_class,
-            patch("main.RankingEngine") as mock_engine_class,
             patch("main.ScoringDataWriter") as mock_writer_class,
         ):
             mock_provider = MagicMock()
@@ -210,12 +205,11 @@ class TestScoringPipeline:
             mock_engine = MagicMock()
             mock_engine.rank_spaces.return_value = ranked_spaces
             mock_engine.rank_entities.return_value = mock_entities
-            mock_engine_class.return_value = mock_engine
 
             mock_writer = MagicMock()
             mock_writer_class.return_value = mock_writer
 
-            pipeline = ScoringPipeline("postgresql://test/db")
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
             pipeline.run()
 
             # Verify rank_entities was called with ranked_spaces (from scoring_data after rank_spaces)
@@ -238,7 +232,8 @@ class TestScoringPipeline:
             mock_provider.fetch_all.return_value = mock_scoring_data
             mock_provider_class.return_value = mock_provider
 
-            pipeline = ScoringPipeline("postgresql://test/db")
+            mock_engine = MagicMock()
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
             assert pipeline.scoring_data is None
 
             pipeline._fetch_data()
@@ -256,7 +251,8 @@ class TestScoringPipeline:
             mock_writer = MagicMock()
             mock_writer_class.return_value = mock_writer
 
-            pipeline = ScoringPipeline("postgresql://test/db")
+            mock_engine = MagicMock()
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
             pipeline.scoring_data = ScoringData(
                 entities=mock_entities,
                 votes=[],
