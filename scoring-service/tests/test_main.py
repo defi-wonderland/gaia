@@ -242,6 +242,19 @@ class TestScoringPipeline:
             mock_provider.fetch_all.assert_called_once()
             assert pipeline.scoring_data == mock_scoring_data
 
+    def test_fetch_data_raises_when_provider_returns_none(self) -> None:
+        """Test that _fetch_data raises RuntimeError when provider returns None."""
+        with patch("main.ScoringDataProvider") as mock_provider_class:
+            mock_provider = MagicMock()
+            mock_provider.fetch_all.return_value = None
+            mock_provider_class.return_value = mock_provider
+
+            mock_engine = MagicMock()
+            pipeline = ScoringPipeline("postgresql://test/db", mock_engine)
+
+            with pytest.raises(RuntimeError, match="Scoring data not initialized"):
+                pipeline._fetch_data()
+
     def test_write_scores_uses_scoring_data(self) -> None:
         """Test that _write_scores uses entities and spaces from scoring_data."""
         mock_entities = [Entity(id="entity-1", created_at=datetime.now())]

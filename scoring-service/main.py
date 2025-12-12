@@ -42,7 +42,10 @@ class ScoringPipeline:
         """Fetch data from the database."""
         logger.info("Fetching scoring data from database")
         provider = ScoringDataProvider(self.database_url)
-        self.scoring_data = provider.fetch_all()
+        scoring_data = provider.fetch_all()
+        if scoring_data is None:
+            raise RuntimeError("Scoring data not initialized")
+        self.scoring_data = scoring_data
         logger.info(
             "Fetched %d entities, %d spaces, %d users, %d votes",
             len(self.scoring_data.entities),
@@ -67,7 +70,7 @@ class ScoringPipeline:
         self.scoring_data.entities = self.engine.rank_entities(
             self.scoring_data.entities,
             self.scoring_data.votes,
-            self.scoring_data.users,    
+            self.scoring_data.users,
             self.scoring_data.spaces,
         )
         logger.info("Ranked %d entities", len(self.scoring_data.entities))
