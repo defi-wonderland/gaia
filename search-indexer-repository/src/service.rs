@@ -357,6 +357,10 @@ mod tests {
 
     #[async_trait]
     impl SearchIndexProvider for MockProvider {
+        async fn ensure_index_exists(&self) -> Result<(), SearchIndexError> {
+            Ok(())
+        }
+
         async fn update_document(
             &self,
             request: &UpdateEntityRequest,
