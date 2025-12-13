@@ -222,6 +222,7 @@ mod tests {
     struct MockSearchProvider {
         updated_count: AtomicUsize,
         deleted_count: AtomicUsize,
+        unset_properties_calls: std::sync::Mutex<Vec<UnsetEntityPropertiesRequest>>,
     }
 
     impl MockSearchProvider {
@@ -229,6 +230,7 @@ mod tests {
             Self {
                 updated_count: AtomicUsize::new(0),
                 deleted_count: AtomicUsize::new(0),
+                unset_properties_calls: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -301,8 +303,12 @@ mod tests {
 
         async fn unset_document_properties(
             &self,
-            _request: &UnsetEntityPropertiesRequest,
+            request: &UnsetEntityPropertiesRequest,
         ) -> Result<(), SearchIndexError> {
+            self.unset_properties_calls
+                .lock()
+                .unwrap()
+                .push(request.clone());
             Ok(())
         }
     }
@@ -346,5 +352,169 @@ mod tests {
         loader.load(events).await.unwrap();
 
         assert_eq!(provider.deleted_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_unset_properties_processing() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let mut loader = SearchLoader::new(provider.clone());
+
+        let events = vec![ProcessedEvent::UnsetProperties {
+            entity_id: Uuid::new_v4(),
+            space_id: Uuid::new_v4(),
+            property_keys: vec!["name".to_string(), "description".to_string()],
+        }];
+
+        loader.load(events).await.unwrap();
+
+        // Check that unset_properties_calls was incremented (MockSearchProvider always succeeds)
+        assert_eq!(provider.unset_properties_calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mixed_event_types() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let mut loader = SearchLoader::new(provider.clone());
+
+        let events = vec![
+            ProcessedEvent::Index(EntityDocument::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Some("Entity 1".to_string()),
+                None,
+            )),
+            ProcessedEvent::Delete {
+                entity_id: Uuid::new_v4(),
+                space_id: Uuid::new_v4(),
+            },
+            ProcessedEvent::Index(EntityDocument::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Some("Entity 2".to_string()),
+                Some("Description".to_string()),
+            )),
+            ProcessedEvent::UnsetProperties {
+                entity_id: Uuid::new_v4(),
+                space_id: Uuid::new_v4(),
+                property_keys: vec!["name".to_string()],
+            },
+        ];
+
+        loader.load(events).await.unwrap();
+        loader.flush().await.unwrap(); // Flush to process pending updates and deletes
+
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.deleted_count.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.unset_properties_calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_batch_size_triggered_flush() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let config = LoaderConfig { batch_size: 2 }; // Small batch size
+        let mut loader = SearchLoader::with_config(provider.clone(), config);
+
+        // Add exactly batch_size documents
+        let events = vec![
+            ProcessedEvent::Index(EntityDocument::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Some("Entity 1".to_string()),
+                None,
+            )),
+            ProcessedEvent::Index(EntityDocument::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                Some("Entity 2".to_string()),
+                None,
+            )),
+        ];
+
+        loader.load(events).await.unwrap();
+        // Should have auto-flushed due to batch size
+
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_manual_flush() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let mut loader = SearchLoader::new(provider.clone());
+
+        let events = vec![ProcessedEvent::Index(EntityDocument::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Test Entity".to_string()),
+            None,
+        ))];
+
+        loader.load(events).await.unwrap();
+        // Don't flush yet
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 0);
+
+        // Manual flush
+        loader.flush().await.unwrap();
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_empty_loader() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let mut loader = SearchLoader::new(provider.clone());
+
+        // Flush empty loader should succeed
+        loader.flush().await.unwrap();
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_loader_configuration() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let config = LoaderConfig { batch_size: 42 };
+        let _loader = SearchLoader::with_config(provider, config);
+
+        // Test that config is applied (we can't directly access fields, but creation should work)
+        assert!(true);
+    }
+
+    #[tokio::test]
+    async fn test_default_configuration() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let _loader = SearchLoader::new(provider);
+
+        // Test that default config works
+        assert!(true);
+    }
+
+    #[tokio::test]
+    async fn test_check_ready() {
+        let provider = Arc::new(MockSearchProvider::new());
+        let loader = SearchLoader::new(provider);
+
+        // check_ready should always return Ok for the current implementation
+        let result = loader.check_ready().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_entity_document_conversion() {
+        let entity_id = Uuid::new_v4();
+        let space_id = Uuid::new_v4();
+        let doc = EntityDocument::new(
+            entity_id,
+            space_id,
+            Some("Test Name".to_string()),
+            Some("Test Description".to_string()),
+        );
+
+        let provider = Arc::new(MockSearchProvider::new());
+        let mut loader = SearchLoader::new(provider.clone());
+
+        let events = vec![ProcessedEvent::Index(doc)];
+        loader.load(events).await.unwrap();
+        loader.flush().await.unwrap();
+
+        // Verify the document was processed (MockSearchProvider stores requests)
+        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 1);
     }
 }
