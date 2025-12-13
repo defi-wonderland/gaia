@@ -141,7 +141,7 @@ impl Dependencies {
         let loader = SearchLoader::new(Arc::new(search_provider));
 
         // Create orchestrator
-        let orchestrator = Orchestrator::new(consumer, processor, loader);
+        let orchestrator = Orchestrator::new(Arc::new(consumer), processor, loader);
 
         Ok(Self { orchestrator })
     }

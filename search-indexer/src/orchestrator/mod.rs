@@ -2,6 +2,7 @@
 //!
 //! Coordinates the consumer, processor, and loader components.
 
+use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -12,6 +13,22 @@ use crate::consumer::{KafkaConsumer, StreamMessage};
 use crate::errors::IngestError;
 use crate::loader::SearchLoader;
 use crate::processor::EntityProcessor;
+
+/// Trait for event consumers used by the orchestrator.
+/// This allows for dependency injection and testing with mock consumers.
+#[async_trait::async_trait]
+pub trait Consumer: Send + Sync {
+    /// Subscribe to the configured topics/channels.
+    fn subscribe(&self) -> Result<(), IngestError>;
+
+    /// Run the consumer, sending messages through the provided channel.
+    async fn run(
+        &self,
+        sender: mpsc::Sender<StreamMessage>,
+        ack_receiver: mpsc::Receiver<StreamMessage>,
+        shutdown: tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<(), IngestError>;
+}
 
 /// Configuration for the orchestrator.
 #[derive(Debug, Clone)]
@@ -36,7 +53,7 @@ impl Default for OrchestratorConfig {
 /// - Handles shutdown signals
 /// - Monitors ingest health
 pub struct Orchestrator {
-    consumer: Arc<KafkaConsumer>,
+    consumer: Arc<dyn Consumer>,
     processor: EntityProcessor,
     loader: SearchLoader,
     config: OrchestratorConfig,
@@ -49,11 +66,15 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     /// Create a new orchestrator with the given components.
-    pub fn new(consumer: KafkaConsumer, processor: EntityProcessor, loader: SearchLoader) -> Self {
+    pub fn new(
+        consumer: Arc<dyn Consumer>,
+        processor: EntityProcessor,
+        loader: SearchLoader,
+    ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Self {
-            consumer: Arc::new(consumer),
+            consumer,
             processor,
             loader,
             config: OrchestratorConfig::default(),
@@ -65,7 +86,7 @@ impl Orchestrator {
 
     /// Create a new orchestrator with custom configuration.
     pub fn with_config(
-        consumer: KafkaConsumer,
+        consumer: Arc<dyn Consumer>,
         processor: EntityProcessor,
         loader: SearchLoader,
         config: OrchestratorConfig,
@@ -73,7 +94,7 @@ impl Orchestrator {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Self {
-            consumer: Arc::new(consumer),
+            consumer,
             processor,
             loader,
             config,
@@ -276,5 +297,21 @@ impl Orchestrator {
     /// Trigger a graceful shutdown.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
+    }
+}
+
+#[async_trait]
+impl Consumer for KafkaConsumer {
+    fn subscribe(&self) -> Result<(), IngestError> {
+        self.subscribe()
+    }
+
+    async fn run(
+        &self,
+        sender: mpsc::Sender<StreamMessage>,
+        ack_receiver: mpsc::Receiver<StreamMessage>,
+        shutdown: tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<(), IngestError> {
+        self.run(sender, ack_receiver, shutdown).await
     }
 }

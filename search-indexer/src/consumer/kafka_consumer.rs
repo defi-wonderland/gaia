@@ -587,3 +587,15 @@ impl KafkaConsumer {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(KNOWLEDGE_EDITS_TOPIC, "knowledge.edits");
+        assert_eq!(DEFAULT_BATCH_SIZE, 50);
+        assert_eq!(DEFAULT_BATCH_TIMEOUT_MS, 1000);
+    }
+}
