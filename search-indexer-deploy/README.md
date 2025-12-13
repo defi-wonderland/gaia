@@ -1,6 +1,6 @@
 # Search Indexer Deployment
 
-Kubernetes deployment configurations for the search index and monitoring stack.
+Kubernetes deployment configurations for the search indexer, OpenSearch, and monitoring stack.
 
 ## Local Development
 
@@ -17,6 +17,11 @@ Services:
 - **Grafana**: `http://localhost:4040` (admin/admin)
 - **Prometheus**: `http://localhost:9090`
 - **OpenSearch Exporter**: `http://localhost:9114`
+
+Run the search indexer locally:
+```bash
+OPENSEARCH_URL=http://localhost:9200 cargo run -p search-indexer
+```
 
 Check cluster health:
 ```bash
@@ -37,6 +42,7 @@ Before deploying, create the required secrets in the `search` namespace:
 |--------|------|-------------|
 | `kafka-credentials` | `KAFKA_BROKER`, `KAFKA_USERNAME`, `KAFKA_PASSWORD`, `KAFKA_SSL_CA_PEM` | Managed Kafka connection (see [hermes README](../hermes/README.md) for details) |
 | `grafana-credentials` | `ADMIN_USER`, `ADMIN_PASSWORD` | Grafana admin login |
+| `search-indexer-secrets` | `AXIOM_TOKEN` | Optional, for Axiom logging |
 
 See [k8s-secrets-isolation.md](../docs/k8s-secrets-isolation.md) for the secrets strategy.
 
@@ -80,6 +86,8 @@ search-indexer-deploy/
 └── k8s/                 # Kubernetes manifests (production)
     ├── kustomization.yaml
     ├── namespace.yaml
+    ├── opensearch.yaml      # OpenSearch StatefulSet + Service
+    ├── search-indexer.yaml  # Search Indexer Deployment
     └── monitoring.yaml      # Prometheus + Grafana + OpenSearch Exporter
 ```
 
@@ -116,6 +124,22 @@ The monitoring stack includes:
   - Thread pool queues and rejections
   - Circuit breaker status
 
+## Environment Variables
+
+The search-indexer binary uses these environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENSEARCH_URL` | OpenSearch REST endpoint | `http://localhost:9200` |
+| `KAFKA_BROKER` | Kafka broker address | `localhost:9092` |
+| `KAFKA_USERNAME` | Kafka SASL username (required for managed Kafka) | - |
+| `KAFKA_PASSWORD` | Kafka SASL password (required for managed Kafka) | - |
+| `KAFKA_SSL_CA_PEM` | Kafka CA certificate PEM (required for managed Kafka with SSL) | - |
+| `KAFKA_GROUP_ID` | Consumer group ID | `search-indexer` |
+| `RUST_LOG` | Log level | `search_indexer=info` |
+| `AXIOM_TOKEN` | Axiom API token (optional) | - |
+| `AXIOM_DATASET` | Axiom dataset name | `gaia.search-indexer` |
+
 ## Security Notes
 
 ⚠️ **The default configuration disables OpenSearch security for development.**
@@ -126,11 +150,12 @@ For production, you should:
 3. Set up authentication
 4. Use Kubernetes secrets for credentials (✅ Grafana credentials are already using secrets)
 
-### Grafana Security (Production)
+### Grafana Security
 
-- Grafana is exposed via NodePort on port `30440` over HTTP
+- Grafana is **publicly exposed** via NodePort on port `30440` over **HTTP** (not HTTPS)
 - Credentials are stored in Kubernetes secrets (see Prerequisites section)
-- For production, consider:
+- Ensure you use strong credentials when creating the `grafana-credentials` secret
+- **Warning**: Traffic is unencrypted. For production, consider:
   - Adding TLS/HTTPS (via Ingress + cert-manager or Load Balancer)
   - Restricting access via firewall rules or network policies
-  - Using OAuth/SSO authentication
+  - Using OAuth/SSO authentication with Google or GitHub

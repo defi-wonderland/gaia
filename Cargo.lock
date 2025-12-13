@@ -1281,6 +1281,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4779,6 +4788,37 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
+
+[[package]]
+name = "sdk"
+version = "0.1.0"
+
+[[package]]
+name = "search-indexer"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axiom-rs",
+ "bs58",
+ "chrono",
+ "dotenv",
+ "futures 0.3.31",
+ "hermes-schema",
+ "indexer_utils",
+ "prost 0.13.5",
+ "rdkafka",
+ "sdk",
+ "search-indexer-repository",
+ "search-indexer-shared",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wire",
+]
 
 [[package]]
 name = "search-indexer-repository"
