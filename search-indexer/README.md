@@ -59,6 +59,9 @@ Environment variables:
 | `ENTITIES_INDEX_VERSION` | Index version number | `0` |
 | `KAFKA_BROKER` | Kafka broker address | `localhost:9092` |
 | `KAFKA_GROUP_ID` | Consumer group ID | `search-indexer` |
+| `KAFKA_TOPIC` | Kafka topic to consume | `knowledge.edits` |
+| `KAFKA_BATCH_SIZE` | Messages to batch before sending | `50` |
+| `KAFKA_BATCH_TIMEOUT_MS` | Max wait time before flushing batch (ms) | `1000` |
 | `OPENSEARCH_CONNECTION_MODE` | Connection mode: `fail-fast` or `retry` | `retry` |
 | `OPENSEARCH_RETRY_INTERVAL_SECS` | Retry interval in seconds (retry mode only) | `15` |
 | `AXIOM_TOKEN` | Axiom API token (optional) | - |

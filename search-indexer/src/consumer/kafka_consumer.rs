@@ -9,6 +9,7 @@ use rdkafka::{
     message::Message as KafkaMessage,
     TopicPartitionList,
 };
+use std::env;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
@@ -21,15 +22,6 @@ use hermes_schema::pb::knowledge::HermesEdit;
 use indexer_utils::id::transform_id_bytes;
 use sdk::core::ids::{AVATAR_ATTRIBUTE, DESCRIPTION_ATTRIBUTE, NAME_ATTRIBUTE};
 use wire::pb::grc20::op::Payload;
-
-/// The Kafka topic for knowledge edits.
-const KNOWLEDGE_EDITS_TOPIC: &str = "knowledge.edits";
-
-/// Default batch size for Kafka message batching.
-const DEFAULT_BATCH_SIZE: usize = 50;
-
-/// Default batch timeout in milliseconds.
-const DEFAULT_BATCH_TIMEOUT_MS: u64 = 1000;
 
 /// Pending message information for batching.
 struct PendingMessage {
@@ -45,7 +37,20 @@ pub struct KafkaConsumer {
 }
 
 impl KafkaConsumer {
+    /// The Kafka topic for knowledge edits (configurable via KAFKA_TOPIC env var).
+    const KNOWLEDGE_EDITS_TOPIC: &'static str = "knowledge.edits";
+
+    /// Default batch size for Kafka message batching (configurable via KAFKA_BATCH_SIZE env var).
+    const DEFAULT_BATCH_SIZE: usize = 50;
+
+    /// Default batch timeout in milliseconds (configurable via KAFKA_BATCH_TIMEOUT_MS env var).
+    const DEFAULT_BATCH_TIMEOUT_MS: u64 = 1000;
     /// Create a new Kafka consumer.
+    ///
+    /// Configuration is read from environment variables with fallbacks to defaults:
+    /// - KAFKA_TOPIC: Topic name (default: "knowledge.edits")
+    /// - KAFKA_BATCH_SIZE: Batch size (default: 50)
+    /// - KAFKA_BATCH_TIMEOUT_MS: Batch timeout in milliseconds (default: 1000)
     ///
     /// # Arguments
     ///
@@ -57,12 +62,20 @@ impl KafkaConsumer {
     /// * `Ok(KafkaConsumer)` - A new consumer instance
     /// * `Err(IngestError)` - If consumer creation fails
     pub fn new(brokers: &str, group_id: &str) -> Result<Self, IngestError> {
-        Self::with_batch_config(
-            brokers,
-            group_id,
-            DEFAULT_BATCH_SIZE,
-            DEFAULT_BATCH_TIMEOUT_MS,
-        )
+        let topic =
+            env::var("KAFKA_TOPIC").unwrap_or_else(|_| Self::KNOWLEDGE_EDITS_TOPIC.to_string());
+
+        let batch_size = env::var("KAFKA_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(Self::DEFAULT_BATCH_SIZE);
+
+        let batch_timeout_ms = env::var("KAFKA_BATCH_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(Self::DEFAULT_BATCH_TIMEOUT_MS);
+
+        Self::with_batch_config(brokers, group_id, topic, batch_size, batch_timeout_ms)
     }
 
     /// Create a new Kafka consumer with custom batch configuration.
@@ -71,6 +84,7 @@ impl KafkaConsumer {
     ///
     /// * `brokers` - Kafka broker addresses (comma-separated)
     /// * `group_id` - Consumer group ID
+    /// * `topic` - Kafka topic to consume from
     /// * `batch_size` - Number of messages to batch before sending
     /// * `batch_timeout_ms` - Maximum time to wait before flushing a partial batch (milliseconds)
     ///
@@ -81,6 +95,7 @@ impl KafkaConsumer {
     pub fn with_batch_config(
         brokers: &str,
         group_id: &str,
+        topic: String,
         batch_size: usize,
         batch_timeout_ms: u64,
     ) -> Result<Self, IngestError> {
@@ -103,7 +118,7 @@ impl KafkaConsumer {
 
         Ok(Self {
             consumer,
-            topics: vec![KNOWLEDGE_EDITS_TOPIC.to_string()],
+            topics: vec![topic.clone()],
             batch_size,
             batch_timeout: Duration::from_millis(batch_timeout_ms),
         })
@@ -146,6 +161,26 @@ impl KafkaConsumer {
         // Skip the first tick immediately
         flush_timer.tick().await;
 
+        // ========================================================================================
+        // MAIN CONSUMER LOOP: Coordinate multiple async operations
+        //
+        // tokio::select! allows waiting on multiple async operations concurrently and executes
+        // the first branch that becomes ready.
+        //
+        // EXECUTION ORDER (by priority):
+        // 1. Shutdown signal - Immediate termination, highest priority for graceful shutdown
+        // 2. Acknowledgments - Offset commits after successful processing (time-sensitive)
+        // 3. Kafka messages - Regular message processing and batching
+        // 4. Batch timeout - Periodic flushing of accumulated messages
+        //
+        // BENEFITS:
+        // - Less race condition risk than multi-threaded code: Only one branch executes per iteration
+        // - Clear semantics: All concurrent logic visible in one place
+        //
+        // AT-LEAST-ONCE DELIVERY: Unprocessed batches are discarded on shutdown since they may not fully
+        // have been processed and offsets haven't been committed.
+        // They'll be re-processed on restart.
+        // ========================================================================================
         loop {
             tokio::select! {
                 _ = shutdown.recv() => {
@@ -350,7 +385,7 @@ impl KafkaConsumer {
         );
 
         // Parse the message based on topic
-        let events = if topic == KNOWLEDGE_EDITS_TOPIC {
+        let events = if topic == self.topics[0] {
             match self.parse_edit_message(payload, msg) {
                 Ok(events) => events,
                 Err(e) => {
@@ -594,8 +629,8 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(KNOWLEDGE_EDITS_TOPIC, "knowledge.edits");
-        assert_eq!(DEFAULT_BATCH_SIZE, 50);
-        assert_eq!(DEFAULT_BATCH_TIMEOUT_MS, 1000);
+        assert_eq!(KafkaConsumer::KNOWLEDGE_EDITS_TOPIC, "knowledge.edits");
+        assert_eq!(KafkaConsumer::DEFAULT_BATCH_SIZE, 50);
+        assert_eq!(KafkaConsumer::DEFAULT_BATCH_TIMEOUT_MS, 1000);
     }
 }
