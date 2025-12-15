@@ -235,9 +235,8 @@ impl SearchIndexProvider for OpenSearchProvider {
         let alias_exists = get_alias_response.is_ok()
             && get_alias_response
                 .as_ref()
-                .unwrap()
-                .status_code()
-                .is_success();
+                .map(|resp| resp.status_code().is_success())
+                .unwrap_or(false);
 
         if !alias_exists {
             // Alias doesn't exist, create it
@@ -277,7 +276,9 @@ impl SearchIndexProvider for OpenSearchProvider {
         } else {
             // Alias exists, check if it points to the correct index
             let alias_body: Value = get_alias_response
-                .unwrap()
+                .map_err(|e| {
+                    SearchIndexError::connection(format!("Failed to get alias response: {}", e))
+                })?
                 .json()
                 .await
                 .map_err(|e| SearchIndexError::parse(e.to_string()))?;

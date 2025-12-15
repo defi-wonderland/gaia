@@ -166,20 +166,26 @@ impl Orchestrator {
                             match self.process_events(events).await {
                                 Ok(()) => {
                                     // Send success acknowledgment
-                                    let _ = ack_transmitter.send(StreamMessage::Acknowledgment {
+                                    if let Err(send_err) = ack_transmitter.send(StreamMessage::Acknowledgment {
                                         offsets,
                                         success: true,
                                         error: None,
-                                    }).await;
+                                    }).await {
+                                        error!(error = %send_err, "Failed to send success acknowledgment - channel closed");
+                                        return Err(IngestError::ChannelError(format!("Failed to send success acknowledgment: {}", send_err)));
+                                    }
                                 }
                                 Err(e) => {
                                     error!(error = %e, "Failed to process events. Sending NACK to broker");
                                     // Send failure acknowledgment
-                                    let _ = ack_transmitter.send(StreamMessage::Acknowledgment {
+                                    if let Err(send_err) = ack_transmitter.send(StreamMessage::Acknowledgment {
                                         offsets,
                                         success: false,
                                         error: Some(e.to_string()),
-                                    }).await;
+                                    }).await {
+                                        error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
+                                        return Err(IngestError::ChannelError(format!("Failed to send failure acknowledgment: {}", send_err)));
+                                    }
                                 }
                             }
                         }
