@@ -14,21 +14,21 @@ indexer_utils = { path = "../indexer_utils" }
 sdk = { path = "../sdk" }
 
 # Kafka
-rdkafka = { version = "0.36.2", features = ["cmake-build", "zstd"] }
+rdkafka = { version = "0.38.0", features = ["cmake-build", "zstd"] }
 
 # Async runtime
-tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 futures = "0.3.31"
 async-trait = "0.1.88"
 
 # Serialization
-prost = "0.13.5"
+prost = "0.14.1"
 serde_json = "1.0.140"
 bs58 = "0.5.1"
 
 # Error handling
-thiserror = "2.0.12"
+thiserror = "2.0.17"
 
 # Utilities
 chrono = "0.4.41"
@@ -38,7 +38,7 @@ dotenv = "0.15.0"
 # Logging
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
-axiom-rs = "0.11.2"
+axiom-rs = "0.11.4"
 
 [dev-dependencies]
-tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread", "test-util"] }

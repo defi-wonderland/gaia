@@ -429,7 +429,7 @@ impl KafkaConsumer {
         // Parse space_id - it may be hex-encoded UUID bytes or standard UUID string format
         let space_id_str = &edit.space_id;
         let space_id = if space_id_str.len() == 32
-            && space_id_str.chars().all(|c| c.is_ascii_hexdigit())
+            && space_id_str.chars().all(|c: char| c.is_ascii_hexdigit())
         {
             // Hex-encoded UUID bytes (32 hex chars) - convert to UUID format
             let uuid_str = format!(
@@ -464,7 +464,7 @@ impl KafkaConsumer {
                 match payload {
                     Payload::UpdateEntity(entity) => {
                         if let Some(event) =
-                            self.process_update_entity(entity, space_id, &edit, msg)
+                            self.process_update_entity(&entity, space_id, &edit, msg)
                         {
                             events.push(event);
                         } else {

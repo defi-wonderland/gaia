@@ -287,8 +287,6 @@ impl Orchestrator {
             .iter()
             .filter(|e| matches!(e, crate::processor::ProcessedEvent::Index(_)))
             .count();
-        self.total_documents_indexed
-            .fetch_add(index_count as u64, Ordering::Relaxed);
 
         // Load into search index and process all operations immediately.
         // This ensures we only ACK to Kafka after documents are actually indexed.
@@ -304,6 +302,10 @@ impl Orchestrator {
                 operation_summaries.len()
             )));
         }
+
+        // Only update the count if there are 0 failed indexes
+        self.total_documents_indexed
+            .fetch_add(index_count as u64, Ordering::Relaxed);
 
         Ok(())
     }

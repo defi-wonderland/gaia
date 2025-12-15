@@ -52,7 +52,7 @@ impl EntityEvent {
             name,
             description,
             avatar,
-            cover: None,
+            cover: None, // Cover will be used in the future
             unset_property_keys: Vec::new(),
         }
     }
@@ -66,7 +66,7 @@ impl EntityEvent {
             name: None,
             description: None,
             avatar: None,
-            cover: None,
+            cover: None, // Cover will be used in the future
             unset_property_keys: Vec::new(),
         }
     }
@@ -80,7 +80,7 @@ impl EntityEvent {
             name: None,
             description: None,
             avatar: None,
-            cover: None,
+            cover: None, // Cover will be used in the future
             unset_property_keys: property_keys,
         }
     }
