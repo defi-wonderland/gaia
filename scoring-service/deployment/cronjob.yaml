@@ -20,6 +20,32 @@ spec:
                     secretKeyRef:
                       name: scoring-service-credentials
                       key: DATABASE_URL
+                - name: LOG_LEVEL
+                  value: "INFO"
+                - name: USE_CONTESTATION_SCORE
+                  value: "False"
+                - name: USE_TIME_DECAY
+                  value: "False"
+                - name: TIME_DECAY_FACTOR
+                  value: "0.1"
+                - name: INCLUDE_SUBSPACE_VOTES
+                  value: "False"
+                - name: USE_ACTIVITY_METRICS
+                  value: "True"
+                - name: USE_DISTANCE_WEIGHTING
+                  value: "True"
+                - name: DISTANCE_WEIGHT_BASE
+                  value: "0.8"
+                - name: MAX_DISTANCE
+                  value: "10"
+                - name: NORMALIZE_SCORES
+                  value: "True"
+                - name: NORMALIZATION_METHOD
+                  value: "z_score"
+                - name: FILTER_NON_MEMBERS
+                  value: "False"
+                - name: REQUIRE_SPACE_MEMBERSHIP
+                  value: "False"
               resources:
                 requests:
                   memory: "1024Mi"

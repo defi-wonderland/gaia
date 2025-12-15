@@ -10,4 +10,19 @@ services:
       - PYTHONUNBUFFERED=1
       # Use copy mode for uv to avoid hardlink warnings in Docker volumes
       - UV_LINK_MODE=copy
+      # Logging configuration
+      - LOG_LEVEL=INFO
+      # Ranking algorithm configuration
+      - USE_CONTESTATION_SCORE=False
+      - USE_TIME_DECAY=False
+      - TIME_DECAY_FACTOR=0.1
+      - INCLUDE_SUBSPACE_VOTES=False
+      - USE_ACTIVITY_METRICS=True
+      - USE_DISTANCE_WEIGHTING=True
+      - DISTANCE_WEIGHT_BASE=0.8
+      - MAX_DISTANCE=10
+      - NORMALIZE_SCORES=True
+      - NORMALIZATION_METHOD=z_score
+      - FILTER_NON_MEMBERS=False
+      - REQUIRE_SPACE_MEMBERSHIP=False
 
