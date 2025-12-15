@@ -60,9 +60,15 @@ impl SearchLoader {
 
     /// Load a batch of processed events.
     ///
-    /// Documents are batched and flushed when the batch size is reached.
+    /// Processes all events immediately, indexing documents and handling deletes.
+    /// Returns summaries of bulk operations performed.
     #[instrument(skip(self, events), fields(event_count = events.len()))]
-    pub async fn load(&mut self, events: Vec<ProcessedEvent>) -> Result<(), IngestError> {
+    pub async fn load(
+        &mut self,
+        events: Vec<ProcessedEvent>,
+    ) -> Result<Vec<search_indexer_repository::BatchOperationSummary>, IngestError> {
+        let mut operation_summaries = Vec::new();
+
         for event in events {
             match event {
                 ProcessedEvent::Index(doc) => {
@@ -117,85 +123,92 @@ impl SearchLoader {
             }
         }
 
-        // Flush if we've reached batch size
-        if self.pending_updates.len() >= self.config.batch_size {
-            self.flush().await?;
-        }
+        // Process all pending updates
+        if !self.pending_updates.is_empty() {
+            let updates: Vec<UpdateEntityRequest> = self.pending_updates.drain(..).collect();
+            let count = updates.len();
 
-        // Process deletes immediately (they're usually less frequent)
-        if !self.pending_deletes.is_empty() {
-            self.process_deletes().await?;
-        }
+            debug!(count = count, "Indexing documents to search index");
 
-        Ok(())
-    }
-
-    /// Flush all pending documents to the search index.
-    #[instrument(skip(self))]
-    pub async fn flush(&mut self) -> Result<(), IngestError> {
-        if self.pending_updates.is_empty() {
-            return Ok(());
-        }
-
-        let updates: Vec<UpdateEntityRequest> = self.pending_updates.drain(..).collect();
-        let count = updates.len();
-
-        debug!(count = count, "Flushing documents to search index");
-
-        // Use bulk_update_documents from SearchIndexProvider
-        match self.provider.bulk_update_documents(&updates).await {
-            Ok(summary) => {
-                if summary.failed > 0 {
-                    warn!(
-                        succeeded = summary.succeeded,
-                        failed = summary.failed,
-                        "Bulk update completed with some failures"
-                    );
-                    // Log individual failures
-                    for result in summary.results.iter().filter(|r| !r.success) {
-                        if let Some(ref err) = result.error {
-                            error!(
-                                entity_id = %result.entity_id,
-                                error = %err,
-                                "Failed to update document"
-                            );
+            // Use bulk_update_documents from SearchIndexProvider
+            match self.provider.bulk_update_documents(&updates).await {
+                Ok(summary) => {
+                    if summary.failed > 0 {
+                        warn!(
+                            succeeded = summary.succeeded,
+                            failed = summary.failed,
+                            "Bulk update completed with some failures"
+                        );
+                        // Log individual failures
+                        for result in summary.results.iter().filter(|r| !r.success) {
+                            if let Some(ref err) = result.error {
+                                error!(
+                                    entity_id = %result.entity_id,
+                                    error = %err,
+                                    "Failed to update document"
+                                );
+                            }
                         }
+                    } else {
+                        debug!(
+                            count = summary.succeeded,
+                            "Successfully updated all documents"
+                        );
                     }
-                } else {
-                    debug!(
-                        count = summary.succeeded,
-                        "Successfully updated all documents"
-                    );
+                    operation_summaries.push(summary);
                 }
-                Ok(())
-            }
-            Err(e) => {
-                error!(error = %e, count = count, "Failed to bulk update documents");
-                Err(IngestError::loader(format!(
-                    "Failed to bulk update {} documents: {}",
-                    count, e
-                )))
-            }
-        }
-    }
-
-    /// Process pending delete operations.
-    async fn process_deletes(&mut self) -> Result<(), IngestError> {
-        let deletes: Vec<DeleteEntityRequest> = self.pending_deletes.drain(..).collect();
-
-        for delete_request in deletes {
-            if let Err(e) = self.provider.delete_document(&delete_request).await {
-                // Log but don't fail - document might not exist
-                warn!(
-                    entity_id = %delete_request.entity_id,
-                    space_id = %delete_request.space_id,
-                    error = %e,
-                    "Failed to delete document"
-                );
+                Err(e) => {
+                    error!(error = %e, count = count, "Failed to bulk update documents");
+                    return Err(IngestError::loader(format!(
+                        "Failed to bulk update {} documents: {}",
+                        count, e
+                    )));
+                }
             }
         }
 
-        Ok(())
+        // Process all pending deletes
+        if !self.pending_deletes.is_empty() {
+            let deletes: Vec<DeleteEntityRequest> = self.pending_deletes.drain(..).collect();
+
+            match self.provider.bulk_delete_documents(&deletes).await {
+                Ok(summary) => {
+                    if summary.failed > 0 {
+                        warn!(
+                            succeeded = summary.succeeded,
+                            failed = summary.failed,
+                            "Bulk delete completed with some failures"
+                        );
+                        // Log individual failures
+                        for result in summary.results.iter().filter(|r| !r.success) {
+                            if let Some(ref err) = result.error {
+                                error!(
+                                    entity_id = %result.entity_id,
+                                    error = %err,
+                                    "Failed to delete document"
+                                );
+                            }
+                        }
+                    } else {
+                        debug!(
+                            count = summary.succeeded,
+                            "Successfully deleted all documents"
+                        );
+                    }
+                    operation_summaries.push(summary);
+                }
+                Err(e) => {
+                    error!(error = %e, count = deletes.len(), "Failed to bulk delete documents");
+                    return Err(IngestError::loader(format!(
+                        "Failed to bulk delete {} documents: {}",
+                        deletes.len(),
+                        e
+                    )));
+                }
+            }
+        }
+
+        Ok(operation_summaries)
     }
 
     /// Check if the provider is ready (for health checks).
@@ -334,7 +347,6 @@ mod tests {
         ];
 
         loader.load(events).await.unwrap();
-        loader.flush().await.unwrap();
 
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 2);
     }
@@ -401,7 +413,6 @@ mod tests {
         ];
 
         loader.load(events).await.unwrap();
-        loader.flush().await.unwrap(); // Flush to process pending updates and deletes
 
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 2);
         assert_eq!(provider.deleted_count.load(Ordering::SeqCst), 1);
@@ -409,12 +420,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_size_triggered_flush() {
+    async fn test_load_multiple_documents() {
         let provider = Arc::new(MockSearchProvider::new());
-        let config = LoaderConfig { batch_size: 2 }; // Small batch size
-        let mut loader = SearchLoader::with_config(provider.clone(), config);
+        let mut loader = SearchLoader::new(provider.clone());
 
-        // Add exactly batch_size documents
+        // Add multiple documents
         let events = vec![
             ProcessedEvent::Index(EntityDocument::new(
                 Uuid::new_v4(),
@@ -431,13 +441,13 @@ mod tests {
         ];
 
         loader.load(events).await.unwrap();
-        // Should have auto-flushed due to batch size
+        // Should process all documents immediately
 
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
-    async fn test_manual_flush() {
+    async fn test_load_processes_immediately() {
         let provider = Arc::new(MockSearchProvider::new());
         let mut loader = SearchLoader::new(provider.clone());
 
@@ -449,21 +459,18 @@ mod tests {
         ))];
 
         loader.load(events).await.unwrap();
-        // Don't flush yet
-        assert_eq!(provider.updated_count.load(Ordering::SeqCst), 0);
-
-        // Manual flush
-        loader.flush().await.unwrap();
+        // Load processes immediately
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn test_flush_empty_loader() {
+    async fn test_load_empty_events() {
         let provider = Arc::new(MockSearchProvider::new());
         let mut loader = SearchLoader::new(provider.clone());
 
-        // Flush empty loader should succeed
-        loader.flush().await.unwrap();
+        // Load empty events should succeed
+        let summaries = loader.load(vec![]).await.unwrap();
+        assert_eq!(summaries.len(), 0);
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 0);
     }
 
@@ -512,7 +519,6 @@ mod tests {
 
         let events = vec![ProcessedEvent::Index(doc)];
         loader.load(events).await.unwrap();
-        loader.flush().await.unwrap();
 
         // Verify the document was processed (MockSearchProvider stores requests)
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 1);

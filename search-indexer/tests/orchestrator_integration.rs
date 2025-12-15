@@ -24,6 +24,7 @@ struct MockConsumer {
     events_to_send: Vec<EntityEvent>,
     should_error: bool,
     error_on_subscribe: bool,
+    last_acknowledgment: std::sync::Mutex<Option<bool>>, // true for ACK, false for NACK
 }
 
 impl MockConsumer {
@@ -32,6 +33,7 @@ impl MockConsumer {
             events_to_send: events,
             should_error: false,
             error_on_subscribe: false,
+            last_acknowledgment: std::sync::Mutex::new(None),
         }
     }
 
@@ -40,7 +42,12 @@ impl MockConsumer {
             events_to_send: events,
             should_error: false,
             error_on_subscribe: true,
+            last_acknowledgment: std::sync::Mutex::new(None),
         }
+    }
+
+    fn get_last_acknowledgment(&self) -> Option<bool> {
+        *self.last_acknowledgment.lock().unwrap()
     }
 }
 
@@ -82,6 +89,7 @@ impl Consumer for MockConsumer {
                 // Shutdown received
             }
             Some(StreamMessage::Acknowledgment { success, .. }) = ack_receiver.recv() => {
+                *self.last_acknowledgment.lock().unwrap() = Some(success);
                 if !success {
                     return Err(IngestError::LoaderError("Processing failed".to_string()));
                 }
@@ -97,6 +105,9 @@ struct MockSearchProvider {
     updated_documents: std::sync::Mutex<Vec<UpdateEntityRequest>>,
     deleted_documents: std::sync::Mutex<Vec<DeleteEntityRequest>>,
     unset_properties_calls: std::sync::Mutex<Vec<UnsetEntityPropertiesRequest>>,
+    // Configuration for simulating failures
+    fail_bulk_updates: bool,
+    fail_bulk_deletes: bool,
 }
 
 impl MockSearchProvider {
@@ -105,6 +116,28 @@ impl MockSearchProvider {
             updated_documents: std::sync::Mutex::new(Vec::new()),
             deleted_documents: std::sync::Mutex::new(Vec::new()),
             unset_properties_calls: std::sync::Mutex::new(Vec::new()),
+            fail_bulk_updates: false,
+            fail_bulk_deletes: false,
+        }
+    }
+
+    fn with_bulk_update_failures() -> Self {
+        Self {
+            updated_documents: std::sync::Mutex::new(Vec::new()),
+            deleted_documents: std::sync::Mutex::new(Vec::new()),
+            unset_properties_calls: std::sync::Mutex::new(Vec::new()),
+            fail_bulk_updates: true,
+            fail_bulk_deletes: false,
+        }
+    }
+
+    fn with_bulk_delete_failures() -> Self {
+        Self {
+            updated_documents: std::sync::Mutex::new(Vec::new()),
+            deleted_documents: std::sync::Mutex::new(Vec::new()),
+            unset_properties_calls: std::sync::Mutex::new(Vec::new()),
+            fail_bulk_updates: false,
+            fail_bulk_deletes: true,
         }
     }
 
@@ -142,24 +175,61 @@ impl SearchIndexProvider for MockSearchProvider {
         requests: &[UpdateEntityRequest],
     ) -> Result<BatchOperationSummary, SearchIndexError> {
         let mut updated = self.updated_documents.lock().unwrap();
-        for request in requests {
-            updated.push(request.clone());
-        }
 
-        Ok(BatchOperationSummary {
-            total: requests.len(),
-            succeeded: requests.len(),
-            failed: 0,
-            results: requests
-                .iter()
-                .map(|r| BatchOperationResult {
-                    entity_id: r.entity_id.clone(),
-                    space_id: r.space_id.clone(),
-                    success: true,
-                    error: None,
-                })
-                .collect(),
-        })
+        if self.fail_bulk_updates {
+            // Simulate partial failures - first half succeeds, second half fails
+            let success_count = requests.len() / 2;
+            let fail_count = requests.len() - success_count;
+
+            let mut results = Vec::new();
+            for (i, request) in requests.iter().enumerate() {
+                if i < success_count {
+                    updated.push(request.clone());
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: true,
+                        error: None,
+                    });
+                } else {
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: false,
+                        error: Some(SearchIndexError::bulk_operation(
+                            "Simulated failure".to_string(),
+                        )),
+                    });
+                }
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: success_count,
+                failed: fail_count,
+                results,
+            })
+        } else {
+            // All succeed
+            for request in requests {
+                updated.push(request.clone());
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: requests.len(),
+                failed: 0,
+                results: requests
+                    .iter()
+                    .map(|r| BatchOperationResult {
+                        entity_id: r.entity_id.clone(),
+                        space_id: r.space_id.clone(),
+                        success: true,
+                        error: None,
+                    })
+                    .collect(),
+            })
+        }
     }
 
     async fn bulk_delete_documents(
@@ -167,24 +237,61 @@ impl SearchIndexProvider for MockSearchProvider {
         requests: &[DeleteEntityRequest],
     ) -> Result<BatchOperationSummary, SearchIndexError> {
         let mut deleted = self.deleted_documents.lock().unwrap();
-        for request in requests {
-            deleted.push(request.clone());
-        }
 
-        Ok(BatchOperationSummary {
-            total: requests.len(),
-            succeeded: requests.len(),
-            failed: 0,
-            results: requests
-                .iter()
-                .map(|r| BatchOperationResult {
-                    entity_id: r.entity_id.clone(),
-                    space_id: r.space_id.clone(),
-                    success: true,
-                    error: None,
-                })
-                .collect(),
-        })
+        if self.fail_bulk_deletes {
+            // Simulate partial failures - first half succeeds, second half fails
+            let success_count = requests.len() / 2;
+            let fail_count = requests.len() - success_count;
+
+            let mut results = Vec::new();
+            for (i, request) in requests.iter().enumerate() {
+                if i < success_count {
+                    deleted.push(request.clone());
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: true,
+                        error: None,
+                    });
+                } else {
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: false,
+                        error: Some(SearchIndexError::bulk_operation(
+                            "Simulated delete failure".to_string(),
+                        )),
+                    });
+                }
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: success_count,
+                failed: fail_count,
+                results,
+            })
+        } else {
+            // All succeed
+            for request in requests {
+                deleted.push(request.clone());
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: requests.len(),
+                failed: 0,
+                results: requests
+                    .iter()
+                    .map(|r| BatchOperationResult {
+                        entity_id: r.entity_id.clone(),
+                        space_id: r.space_id.clone(),
+                        success: true,
+                        error: None,
+                    })
+                    .collect(),
+            })
+        }
     }
 
     async fn unset_document_properties(
@@ -212,6 +319,21 @@ fn create_test_orchestrator(events: Vec<EntityEvent>) -> (Orchestrator, Arc<Mock
     (orchestrator, mock_provider)
 }
 
+/// Helper to create a test orchestrator with mocked dependencies (returns consumer for ACK checking)
+fn create_test_orchestrator_with_consumer(
+    events: Vec<EntityEvent>,
+) -> (Orchestrator, Arc<MockSearchProvider>, Arc<MockConsumer>) {
+    let processor = EntityProcessor::new();
+    let mock_provider = Arc::new(MockSearchProvider::new());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events));
+
+    let orchestrator = Orchestrator::new(mock_consumer.clone(), processor, loader);
+
+    (orchestrator, mock_provider, mock_consumer)
+}
+
 /// Helper to create a test orchestrator with an error-prone consumer
 fn create_error_test_orchestrator(
     events: Vec<EntityEvent>,
@@ -225,6 +347,36 @@ fn create_error_test_orchestrator(
     let orchestrator = Orchestrator::new(mock_consumer, processor, loader);
 
     (orchestrator, mock_provider)
+}
+
+/// Helper to create a test orchestrator with bulk update failures
+fn create_bulk_update_failure_orchestrator(
+    events: Vec<EntityEvent>,
+) -> (Orchestrator, Arc<MockSearchProvider>, Arc<MockConsumer>) {
+    let processor = EntityProcessor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_update_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events.clone()));
+
+    let orchestrator = Orchestrator::new(mock_consumer.clone(), processor, loader);
+
+    (orchestrator, mock_provider, mock_consumer)
+}
+
+/// Helper to create a test orchestrator with bulk delete failures
+fn create_bulk_delete_failure_orchestrator(
+    events: Vec<EntityEvent>,
+) -> (Orchestrator, Arc<MockSearchProvider>, Arc<MockConsumer>) {
+    let processor = EntityProcessor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_delete_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events.clone()));
+
+    let orchestrator = Orchestrator::new(mock_consumer.clone(), processor, loader);
+
+    (orchestrator, mock_provider, mock_consumer)
 }
 
 #[tokio::test]
@@ -413,4 +565,131 @@ async fn test_orchestrator_error_handling() {
         }
         _ => panic!("Expected KafkaError"),
     }
+}
+
+#[tokio::test]
+async fn test_orchestrator_bulk_update_failure_nack() {
+    // Create events that will trigger bulk updates
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 3".to_string()),
+            Some("Description 3".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 4".to_string()),
+            Some("Description 4".to_string()),
+            None,
+        ),
+    ];
+
+    let (mut orchestrator, _mock_provider, mock_consumer) =
+        create_bulk_update_failure_orchestrator(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    // The orchestrator should fail due to bulk operation failures
+    assert!(
+        run_result.is_ok(),
+        "Orchestrator run should succeed (error is handled via NACK)"
+    );
+
+    // Verify that NACK was sent (not ACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK due to bulk operation failures"
+    );
+}
+
+#[tokio::test]
+async fn test_orchestrator_bulk_delete_failure_nack() {
+    // Create events that will trigger bulk deletes
+    let events = vec![
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+    ];
+
+    let (mut orchestrator, _mock_provider, mock_consumer) =
+        create_bulk_delete_failure_orchestrator(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    // The orchestrator should fail due to bulk operation failures
+    assert!(
+        run_result.is_ok(),
+        "Orchestrator run should succeed (error is handled via NACK)"
+    );
+
+    // Verify that NACK was sent (not ACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK due to bulk delete failures"
+    );
+}
+
+#[tokio::test]
+async fn test_orchestrator_successful_bulk_operations_ack() {
+    // Test that successful bulk operations still send ACK
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_test_orchestrator_with_consumer(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    assert!(run_result.is_ok(), "Orchestrator should succeed");
+
+    // Verify that ACK was sent (not NACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK for successful operations"
+    );
+
+    // Verify documents were processed
+    assert_eq!(mock_provider.get_updated_count(), 1);
+    assert_eq!(mock_provider.get_deleted_count(), 1);
 }

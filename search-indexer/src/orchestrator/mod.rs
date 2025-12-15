@@ -290,12 +290,20 @@ impl Orchestrator {
         self.total_documents_indexed
             .fetch_add(index_count as u64, Ordering::Relaxed);
 
-        // Load into search index (adds to pending buffer)
-        self.loader.load(processed).await?;
-
-        // Always flush to OpenSearch before returning Ok.
+        // Load into search index and process all operations immediately.
         // This ensures we only ACK to Kafka after documents are actually indexed.
-        self.loader.flush().await?;
+        let operation_summaries = self.loader.load(processed).await?;
+
+        // Check if any operation had failures
+        let total_failed = operation_summaries.iter().map(|s| s.failed).sum::<usize>();
+        if total_failed > 0 {
+            // At least one indexing operation failed, return error to trigger NACK
+            return Err(IngestError::LoaderError(format!(
+                "Bulk operations completed with {} failures across {} operations",
+                total_failed,
+                operation_summaries.len()
+            )));
+        }
 
         Ok(())
     }
