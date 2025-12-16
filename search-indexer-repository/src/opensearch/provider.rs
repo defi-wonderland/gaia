@@ -89,6 +89,9 @@ impl OpenSearchProvider {
     /// Build a document map from an UpdateEntityRequest with only the provided fields.
     fn build_update_doc(request: &UpdateEntityRequest) -> serde_json::Map<String, Value> {
         let mut doc = serde_json::Map::new();
+        // Always include entity_id and space_id
+        doc.insert("entity_id".to_string(), json!(request.entity_id));
+        doc.insert("space_id".to_string(), json!(request.space_id));
         if let Some(ref name) = request.name {
             doc.insert("name".to_string(), json!(name));
         }
