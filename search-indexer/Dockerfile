@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 rust:1.85-bookworm as builder
+FROM rust:1.92-bookworm as builder
 
 # Install build dependencies for rdkafka
 RUN apt-get update && \
@@ -11,37 +11,20 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy workspace Cargo.toml and Cargo.lock
-COPY Cargo.toml Cargo.lock ./
-
-# Copy all workspace members referenced in Cargo.toml
-# (Cargo needs them to resolve the workspace, even if not directly used)
+# Copy only required crates (no workspace Cargo.toml - build standalone)
 COPY search-indexer ./search-indexer
 COPY search-indexer-shared ./search-indexer-shared
 COPY search-indexer-repository ./search-indexer-repository
 COPY hermes-schema ./hermes-schema
-COPY hermes-processor ./hermes-processor
-COPY hermes-relay ./hermes-relay
 COPY wire ./wire
 COPY indexer_utils ./indexer_utils
-COPY stream ./stream
-COPY indexer ./indexer
-COPY cache ./cache
-COPY ipfs ./ipfs
 COPY sdk ./sdk
-COPY atlas ./atlas
-COPY mock-substream ./mock-substream
-COPY actions-indexer ./actions-indexer
-COPY actions-indexer-pipeline ./actions-indexer-pipeline
-COPY actions-indexer-shared ./actions-indexer-shared
-COPY actions-indexer-repository ./actions-indexer-repository
-COPY actions-substream ./actions-substream
 
-# Build the search-indexer binary (native build - no target needed since builder is already Linux)
+# Build from the crate directory (standalone, not as workspace member)
 WORKDIR /app/search-indexer
-RUN cargo build --release --package search-indexer
+RUN cargo build --release
 
-FROM --platform=linux/amd64 debian:bookworm-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y ca-certificates libssl3 && \
@@ -52,7 +35,7 @@ RUN apt-get update && \
     mkdir -p /home/appuser && \
     chown -R appuser:appuser /home/appuser
 
-COPY --from=builder /app/target/release/search-indexer /usr/local/bin/search-indexer
+COPY --from=builder /app/search-indexer/target/release/search-indexer /usr/local/bin/search-indexer
 
 # Default environment variables
 ENV OPENSEARCH_URL=http://opensearch:9200
