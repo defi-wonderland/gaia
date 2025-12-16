@@ -464,7 +464,7 @@ impl KafkaConsumer {
                 match payload {
                     Payload::UpdateEntity(entity) => {
                         if let Some(event) =
-                            self.process_update_entity(&entity, space_id, &edit, msg)
+                            self.process_update_entity(entity, space_id, &edit, msg)
                         {
                             events.push(event);
                         } else {

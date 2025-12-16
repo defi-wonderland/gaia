@@ -345,7 +345,6 @@ impl SearchIndexProvider for OpenSearchProvider {
     ///
     /// This function deletes a document identified by entity_id and space_id. If the
     /// document doesn't exist, the operation is considered successful (no error is returned).
-
     async fn delete_document(&self, request: &DeleteEntityRequest) -> Result<(), SearchIndexError> {
         let (entity_id, space_id) =
             utils::parse_entity_and_space_ids(&request.entity_id, &request.space_id)?;
