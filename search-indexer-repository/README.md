@@ -26,6 +26,7 @@ The crate uses a trait-based design for dependency injection, allowing:
 │  - bulk_update_documents()          │
 │  - bulk_delete_documents()          │
 │  - unset_document_properties()      │
+│  - bulk_unset_properties()          │
 └─────────────────────────────────────┘
                   │
                   ▼

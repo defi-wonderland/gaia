@@ -11,19 +11,6 @@ use search_indexer_repository::{
     DeleteEntityRequest, SearchIndexProvider, UnsetEntityPropertiesRequest, UpdateEntityRequest,
 };
 
-/// Configuration for the search loader.
-#[derive(Debug, Clone)]
-pub struct LoaderConfig {
-    /// Number of documents to batch before flushing.
-    pub batch_size: usize,
-}
-
-impl Default for LoaderConfig {
-    fn default() -> Self {
-        Self { batch_size: 100 }
-    }
-}
-
 /// Loader that indexes documents into the search engine.
 ///
 /// The loader is responsible for:
@@ -31,9 +18,9 @@ impl Default for LoaderConfig {
 /// - Converting EntityDocuments to UpdateEntityRequests
 pub struct SearchLoader {
     provider: Arc<dyn SearchIndexProvider>,
-    config: LoaderConfig,
     pending_updates: Vec<UpdateEntityRequest>,
     pending_deletes: Vec<DeleteEntityRequest>,
+    pending_unsets: Vec<UnsetEntityPropertiesRequest>,
 }
 
 impl SearchLoader {
@@ -41,20 +28,9 @@ impl SearchLoader {
     pub fn new(provider: Arc<dyn SearchIndexProvider>) -> Self {
         Self {
             provider,
-            config: LoaderConfig::default(),
             pending_updates: Vec::new(),
             pending_deletes: Vec::new(),
-        }
-    }
-
-    /// Create a new search loader with custom configuration.
-    pub fn with_config(provider: Arc<dyn SearchIndexProvider>, config: LoaderConfig) -> Self {
-        let batch_size = config.batch_size;
-        Self {
-            provider,
-            config,
-            pending_updates: Vec::with_capacity(batch_size),
-            pending_deletes: Vec::new(),
+            pending_unsets: Vec::new(),
         }
     }
 
@@ -101,24 +77,13 @@ impl SearchLoader {
                     space_id,
                     property_keys,
                 } => {
-                    // Process unset operations immediately (they're usually infrequent)
+                    // Accumulate unset operations for bulk processing
                     let unset_request = UnsetEntityPropertiesRequest {
                         entity_id: entity_id.to_string(),
                         space_id: space_id.to_string(),
                         property_keys,
                     };
-                    if let Err(e) = self
-                        .provider
-                        .unset_document_properties(&unset_request)
-                        .await
-                    {
-                        warn!(
-                            entity_id = %entity_id,
-                            space_id = %space_id,
-                            error = %e,
-                            "Failed to unset document properties"
-                        );
-                    }
+                    self.pending_unsets.push(unset_request);
                 }
             }
         }
@@ -208,6 +173,47 @@ impl SearchLoader {
             }
         }
 
+        // Process all pending unsets
+        if !self.pending_unsets.is_empty() {
+            let unsets: Vec<UnsetEntityPropertiesRequest> = self.pending_unsets.drain(..).collect();
+
+            match self.provider.bulk_unset_properties(&unsets).await {
+                Ok(summary) => {
+                    if summary.failed > 0 {
+                        warn!(
+                            succeeded = summary.succeeded,
+                            failed = summary.failed,
+                            "Bulk unset completed with some failures"
+                        );
+                        // Log individual failures
+                        for result in summary.results.iter().filter(|r| !r.success) {
+                            if let Some(ref err) = result.error {
+                                error!(
+                                    entity_id = %result.entity_id,
+                                    error = %err,
+                                    "Failed to unset document properties"
+                                );
+                            }
+                        }
+                    } else {
+                        debug!(
+                            count = summary.succeeded,
+                            "Successfully unset properties from all documents"
+                        );
+                    }
+                    operation_summaries.push(summary);
+                }
+                Err(e) => {
+                    error!(error = %e, count = unsets.len(), "Failed to bulk unset properties");
+                    return Err(IngestError::loader(format!(
+                        "Failed to bulk unset properties from {} documents: {}",
+                        unsets.len(),
+                        e
+                    )));
+                }
+            }
+        }
+
         Ok(operation_summaries)
     }
 
@@ -236,6 +242,7 @@ mod tests {
         updated_count: AtomicUsize,
         deleted_count: AtomicUsize,
         unset_properties_calls: std::sync::Mutex<Vec<UnsetEntityPropertiesRequest>>,
+        unset_should_fail: std::sync::Mutex<bool>,
     }
 
     impl MockSearchProvider {
@@ -244,7 +251,12 @@ mod tests {
                 updated_count: AtomicUsize::new(0),
                 deleted_count: AtomicUsize::new(0),
                 unset_properties_calls: std::sync::Mutex::new(Vec::new()),
+                unset_should_fail: std::sync::Mutex::new(false),
             }
+        }
+
+        fn set_unset_should_fail(&self, should_fail: bool) {
+            *self.unset_should_fail.lock().unwrap() = should_fail;
         }
     }
 
@@ -314,6 +326,49 @@ mod tests {
             })
         }
 
+        async fn bulk_unset_properties(
+            &self,
+            requests: &[UnsetEntityPropertiesRequest],
+        ) -> Result<BatchOperationSummary, SearchIndexError> {
+            let mut results = Vec::new();
+            let mut succeeded = 0;
+            let mut failed = 0;
+
+            for request in requests {
+                self.unset_properties_calls
+                    .lock()
+                    .unwrap()
+                    .push(request.clone());
+
+                if *self.unset_should_fail.lock().unwrap() {
+                    failed += 1;
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: false,
+                        error: Some(SearchIndexError::IndexError(
+                            "Mock unset failure".to_string(),
+                        )),
+                    });
+                } else {
+                    succeeded += 1;
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: true,
+                        error: None,
+                    });
+                }
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded,
+                failed,
+                results,
+            })
+        }
+
         async fn unset_document_properties(
             &self,
             request: &UnsetEntityPropertiesRequest,
@@ -322,6 +377,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.clone());
+
+            if *self.unset_should_fail.lock().unwrap() {
+                return Err(SearchIndexError::IndexError(
+                    "Mock unset failure".to_string(),
+                ));
+            }
+
             Ok(())
         }
     }
@@ -475,16 +537,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_loader_configuration() {
-        let provider = Arc::new(MockSearchProvider::new());
-        let config = LoaderConfig { batch_size: 42 };
-        let _loader = SearchLoader::with_config(provider, config);
-
-        // Test that config is applied (we can't directly access fields, but creation should work)
-        assert!(true);
-    }
-
-    #[tokio::test]
     async fn test_default_configuration() {
         let provider = Arc::new(MockSearchProvider::new());
         let _loader = SearchLoader::new(provider);
@@ -522,5 +574,36 @@ mod tests {
 
         // Verify the document was processed (MockSearchProvider stores requests)
         assert_eq!(provider.updated_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_unset_properties_failure_tracking() {
+        let provider = Arc::new(MockSearchProvider::new());
+        provider.set_unset_should_fail(true);
+        let mut loader = SearchLoader::new(provider.clone());
+
+        let entity_id = Uuid::new_v4();
+        let space_id = Uuid::new_v4();
+        let events = vec![ProcessedEvent::UnsetProperties {
+            entity_id,
+            space_id,
+            property_keys: vec!["name".to_string()],
+        }];
+
+        let summaries = loader.load(events).await.unwrap();
+
+        // Should have one operation summary for the bulk unset operation
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.succeeded, 0);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.results.len(), 1);
+
+        let result = &summary.results[0];
+        assert_eq!(result.entity_id, entity_id.to_string());
+        assert_eq!(result.space_id, space_id.to_string());
+        assert!(!result.success);
+        assert!(result.error.is_some());
     }
 }

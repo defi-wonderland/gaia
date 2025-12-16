@@ -108,6 +108,7 @@ struct MockSearchProvider {
     // Configuration for simulating failures
     fail_bulk_updates: bool,
     fail_bulk_deletes: bool,
+    fail_bulk_unsets: bool,
 }
 
 impl MockSearchProvider {
@@ -118,26 +119,28 @@ impl MockSearchProvider {
             unset_properties_calls: std::sync::Mutex::new(Vec::new()),
             fail_bulk_updates: false,
             fail_bulk_deletes: false,
+            fail_bulk_unsets: false,
         }
     }
 
     fn with_bulk_update_failures() -> Self {
         Self {
-            updated_documents: std::sync::Mutex::new(Vec::new()),
-            deleted_documents: std::sync::Mutex::new(Vec::new()),
-            unset_properties_calls: std::sync::Mutex::new(Vec::new()),
             fail_bulk_updates: true,
-            fail_bulk_deletes: false,
+            ..Self::new()
         }
     }
 
     fn with_bulk_delete_failures() -> Self {
         Self {
-            updated_documents: std::sync::Mutex::new(Vec::new()),
-            deleted_documents: std::sync::Mutex::new(Vec::new()),
-            unset_properties_calls: std::sync::Mutex::new(Vec::new()),
-            fail_bulk_updates: false,
             fail_bulk_deletes: true,
+            ..Self::new()
+        }
+    }
+
+    fn with_bulk_unset_failures() -> Self {
+        Self {
+            fail_bulk_unsets: true,
+            ..Self::new()
         }
     }
 
@@ -304,6 +307,68 @@ impl SearchIndexProvider for MockSearchProvider {
             .push(request.clone());
         Ok(())
     }
+
+    async fn bulk_unset_properties(
+        &self,
+        requests: &[UnsetEntityPropertiesRequest],
+    ) -> Result<BatchOperationSummary, SearchIndexError> {
+        let mut unset_calls = self.unset_properties_calls.lock().unwrap();
+
+        if self.fail_bulk_unsets {
+            // Simulate partial failures - first half succeeds, second half fails
+            let success_count = requests.len() / 2;
+            let fail_count = requests.len() - success_count;
+
+            let mut results = Vec::new();
+            for (i, request) in requests.iter().enumerate() {
+                if i < success_count {
+                    unset_calls.push(request.clone());
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: true,
+                        error: None,
+                    });
+                } else {
+                    results.push(BatchOperationResult {
+                        entity_id: request.entity_id.clone(),
+                        space_id: request.space_id.clone(),
+                        success: false,
+                        error: Some(SearchIndexError::bulk_operation(
+                            "Simulated unset failure".to_string(),
+                        )),
+                    });
+                }
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: success_count,
+                failed: fail_count,
+                results,
+            })
+        } else {
+            // All succeed
+            for request in requests {
+                unset_calls.push(request.clone());
+            }
+
+            Ok(BatchOperationSummary {
+                total: requests.len(),
+                succeeded: requests.len(),
+                failed: 0,
+                results: requests
+                    .iter()
+                    .map(|r| BatchOperationResult {
+                        entity_id: r.entity_id.clone(),
+                        space_id: r.space_id.clone(),
+                        success: true,
+                        error: None,
+                    })
+                    .collect(),
+            })
+        }
+    }
 }
 
 /// Helper to create a test orchestrator with mocked dependencies
@@ -370,6 +435,21 @@ fn create_bulk_delete_failure_orchestrator(
 ) -> (Orchestrator, Arc<MockSearchProvider>, Arc<MockConsumer>) {
     let processor = EntityProcessor::new();
     let mock_provider = Arc::new(MockSearchProvider::with_bulk_delete_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events.clone()));
+
+    let orchestrator = Orchestrator::new(mock_consumer.clone(), processor, loader);
+
+    (orchestrator, mock_provider, mock_consumer)
+}
+
+/// Helper to create a test orchestrator with bulk unset failures
+fn create_bulk_unset_failure_orchestrator(
+    events: Vec<EntityEvent>,
+) -> (Orchestrator, Arc<MockSearchProvider>, Arc<MockConsumer>) {
+    let processor = EntityProcessor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_unset_failures());
     let loader = SearchLoader::new(mock_provider.clone());
 
     let mock_consumer = Arc::new(MockConsumer::new(events.clone()));
@@ -692,4 +772,232 @@ async fn test_orchestrator_successful_bulk_operations_ack() {
     // Verify documents were processed
     assert_eq!(mock_provider.get_updated_count(), 1);
     assert_eq!(mock_provider.get_deleted_count(), 1);
+}
+
+#[tokio::test]
+async fn test_bulk_update_success() {
+    // Test simple success case: 2 operations, both succeed
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_test_orchestrator_with_consumer(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator should succeed");
+
+    // Verify that ACK was sent (not NACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK for successful bulk update operations"
+    );
+
+    // Verify both documents were updated
+    assert_eq!(mock_provider.get_updated_count(), 2);
+}
+
+#[tokio::test]
+async fn test_bulk_update_partial_failure() {
+    // Test case with 1 success op and 1 failure op - should end in error/NACK
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_bulk_update_failure_orchestrator(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    // The orchestrator should succeed (error is handled via NACK)
+    assert!(
+        run_result.is_ok(),
+        "Orchestrator run should succeed (error is handled via NACK)"
+    );
+
+    // Verify that NACK was sent (not ACK) - if one fails, whole batch is a failure
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK due to bulk update partial failure (1 success, 1 failure)"
+    );
+
+    // Verify only 1 document was updated (the successful one)
+    assert_eq!(mock_provider.get_updated_count(), 1);
+}
+
+#[tokio::test]
+async fn test_bulk_delete_success() {
+    // Test simple success case: 2 operations, both succeed
+    let events = vec![
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_test_orchestrator_with_consumer(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator should succeed");
+
+    // Verify that ACK was sent (not NACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK for successful bulk delete operations"
+    );
+
+    // Verify both documents were deleted
+    assert_eq!(mock_provider.get_deleted_count(), 2);
+}
+
+#[tokio::test]
+async fn test_bulk_delete_partial_failure() {
+    // Test case with 1 success op and 1 failure op - should end in error/NACK
+    let events = vec![
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+        EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_bulk_delete_failure_orchestrator(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    // The orchestrator should succeed (error is handled via NACK)
+    assert!(
+        run_result.is_ok(),
+        "Orchestrator run should succeed (error is handled via NACK)"
+    );
+
+    // Verify that NACK was sent (not ACK) - if one fails, whole batch is a failure
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK due to bulk delete partial failure (1 success, 1 failure)"
+    );
+
+    // Verify only 1 document was deleted (the successful one)
+    assert_eq!(mock_provider.get_deleted_count(), 1);
+}
+
+#[tokio::test]
+async fn test_bulk_unset_success() {
+    // Test simple success case: 2 operations, both succeed
+    let entity_id_1 = Uuid::new_v4();
+    let space_id_1 = Uuid::new_v4();
+    let entity_id_2 = Uuid::new_v4();
+    let space_id_2 = Uuid::new_v4();
+
+    let events = vec![
+        EntityEvent::unset_properties(
+            entity_id_1,
+            space_id_1,
+            vec!["name".to_string(), "description".to_string()],
+        ),
+        EntityEvent::unset_properties(entity_id_2, space_id_2, vec!["avatar".to_string()]),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_test_orchestrator_with_consumer(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator should succeed");
+
+    // Verify that ACK was sent (not NACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK for successful bulk unset operations"
+    );
+
+    // Verify both unset operations were processed
+    assert_eq!(mock_provider.get_unset_count(), 2);
+}
+
+#[tokio::test]
+async fn test_bulk_unset_partial_failure() {
+    // Test case with 1 success op and 1 failure op - should end in error/NACK
+    let entity_id_1 = Uuid::new_v4();
+    let space_id_1 = Uuid::new_v4();
+    let entity_id_2 = Uuid::new_v4();
+    let space_id_2 = Uuid::new_v4();
+
+    let events = vec![
+        EntityEvent::unset_properties(
+            entity_id_1,
+            space_id_1,
+            vec!["name".to_string(), "description".to_string()],
+        ),
+        EntityEvent::unset_properties(entity_id_2, space_id_2, vec!["avatar".to_string()]),
+    ];
+
+    let (mut orchestrator, mock_provider, mock_consumer) =
+        create_bulk_unset_failure_orchestrator(events);
+
+    // Run the orchestrator
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    let run_result = result.unwrap();
+    // The orchestrator should succeed (error is handled via NACK)
+    assert!(
+        run_result.is_ok(),
+        "Orchestrator run should succeed (error is handled via NACK)"
+    );
+
+    // Verify that NACK was sent (not ACK) - if one fails, whole batch is a failure
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK due to bulk unset partial failure (1 success, 1 failure)"
+    );
+
+    // Verify only 1 unset operation was processed (the successful one)
+    assert_eq!(mock_provider.get_unset_count(), 1);
 }

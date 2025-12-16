@@ -108,6 +108,24 @@ pub trait SearchIndexProvider: Send + Sync {
         requests: &[DeleteEntityRequest],
     ) -> Result<BatchOperationSummary, SearchIndexError>;
 
+    /// Unset (remove) specific properties from multiple documents in bulk and return a summary of successful and failed operations.
+    ///
+    /// Processes each unset request individually and collects results. Properties that don't
+    /// exist are safely ignored.
+    ///
+    /// # Arguments
+    ///
+    /// * `requests` - Slice of unset requests
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(BatchOperationSummary)` - Contains aggregate statistics and individual results
+    /// * `Err(SearchIndexError)` - If the bulk operation fails entirely
+    async fn bulk_unset_properties(
+        &self,
+        requests: &[UnsetEntityPropertiesRequest],
+    ) -> Result<BatchOperationSummary, SearchIndexError>;
+
     /// Unset (remove) specific properties from a document.
     ///
     /// This function removes the specified property keys from a document. If a property

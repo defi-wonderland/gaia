@@ -60,7 +60,7 @@ sequenceDiagram
 │                SearchIndexProvider (Trait)                      │
 │  - Abstract backend interface                                   │
 │  - Methods: update_document (upsert), delete_document          │
-│    + bulk_update, bulk_delete                                  │
+│    + bulk_update, bulk_delete, bulk_unset_properties          │
 │  - Returns SearchIndexError                                     │
 └────────────────────────────┬────────────────────────────────────┘
                              │
