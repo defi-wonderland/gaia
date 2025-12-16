@@ -125,8 +125,8 @@ pub fn parse_bulk_response(
                     .map(|e| {
                         e.get("reason")
                             .and_then(|r| r.as_str())
-                            .unwrap_or_else(|| e.to_string().as_str().to_string().leak())
-                            .to_string()
+                            .map(|reason| reason.to_string())
+                            .unwrap_or_else(|| e.to_string())
                     })
                     .unwrap_or_else(|| {
                         format!("Bulk {} failed with status {}", action, status)

@@ -5,7 +5,7 @@
 
 use crate::errors::SearchIndexError;
 
-/// Validate property keys contain only alphanumeric characters and underscores.
+/// Validate property keys contain only ASCII alphanumeric characters and underscores.
 pub fn validate_property_keys(property_keys: &[String]) -> Result<(), SearchIndexError> {
     if property_keys.is_empty() {
         return Err(SearchIndexError::validation(
@@ -20,9 +20,9 @@ pub fn validate_property_keys(property_keys: &[String]) -> Result<(), SearchInde
             ));
         }
 
-        if !key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(SearchIndexError::validation(format!(
-                "Property key '{}' contains invalid characters. Only alphanumeric characters and underscores are allowed",
+                "Property key '{}' contains invalid characters. Only ASCII alphanumeric characters and underscores are allowed",
                 key
             )));
         }
@@ -42,7 +42,7 @@ pub fn create_unset_properties_script(
         .iter()
         .map(|key| {
             // Escape the key for use in Painless script
-            // Since we've validated the key contains only alphanumeric and underscore,
+            // Since we've validated the key contains only ASCII alphanumeric and underscore,
             // we don't need complex escaping, but we'll still quote it properly
             format!(
                 "if (ctx._source.containsKey(\"{}\")) {{ ctx._source.remove(\"{}\") }}",
