@@ -9,7 +9,7 @@ mod provider;
 mod unset_document_properties;
 
 pub use bulk::{
-    execute_bulk, parse_bulk_response, BulkOperationMeta, BulkScript, BulkScriptBody,
+    execute_bulk, parse_bulk_response, BulkAction, BulkOperationMeta, BulkScript, BulkScriptBody,
     BulkUpdateBody,
 };
 pub use index_config::{get_index_settings, get_versioned_index_name, IndexConfig, INDEX_NAME};

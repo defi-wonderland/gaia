@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::errors::SearchIndexError;
 use crate::interfaces::SearchIndexProvider;
 use crate::opensearch::bulk::{
-    execute_bulk, BulkOperationMeta, BulkScript, BulkScriptBody, BulkUpdateBody,
+    execute_bulk, BulkAction, BulkOperationMeta, BulkScript, BulkScriptBody, BulkUpdateBody,
 };
 use crate::opensearch::index_config::{get_index_settings, get_versioned_index_name, IndexConfig};
 use crate::opensearch::unset_document_properties::create_unset_properties_script;
@@ -433,7 +433,7 @@ impl SearchIndexProvider for OpenSearchProvider {
             &self.index_config.alias,
             operations,
             &metas,
-            "update",
+            BulkAction::Update,
         )
         .await?;
 
@@ -479,7 +479,7 @@ impl SearchIndexProvider for OpenSearchProvider {
             &self.index_config.alias,
             operations,
             &metas,
-            "delete",
+            BulkAction::Delete,
         )
         .await
     }
@@ -567,7 +567,7 @@ impl SearchIndexProvider for OpenSearchProvider {
             &self.index_config.alias,
             operations,
             &metas,
-            "update",
+            BulkAction::Update,
         )
         .await
     }

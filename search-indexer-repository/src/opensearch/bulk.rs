@@ -50,14 +50,34 @@ pub struct BulkOperationMeta {
     pub space_id: String,
 }
 
+/// Bulk operation action type supported by OpenSearch bulk API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAction {
+    Create,
+    Update,
+    Delete,
+}
+
+impl BulkAction {
+    /// Returns the string representation of the action as used in OpenSearch bulk API responses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BulkAction::Create => "create",
+            BulkAction::Update => "update",
+            BulkAction::Delete => "delete",
+        }
+    }
+}
+
 /// Execute a bulk request and parse the response into a BatchOperationSummary.
 pub async fn execute_bulk<B: Serialize>(
     client: &OpenSearch,
     alias: &str,
     operations: Vec<BulkOperation<B>>,
     metas: &[BulkOperationMeta],
-    action: &str,
+    action: BulkAction,
 ) -> Result<BatchOperationSummary, SearchIndexError> {
+    let action_str = action.as_str();
     let response = client
         .bulk(BulkParts::Index(alias))
         .body(operations)
@@ -68,10 +88,10 @@ pub async fn execute_bulk<B: Serialize>(
     let status = response.status_code();
     if !status.is_success() {
         let error_body = response.text().await.unwrap_or_default();
-        error!(status = %status, body = %error_body, "Bulk {} request failed", action);
+        error!(status = %status, body = %error_body, "Bulk {} request failed", action_str);
         return Err(SearchIndexError::bulk_index(format!(
             "Bulk {} failed with status {}: {}",
-            action, status, error_body
+            action_str, status, error_body
         )));
     }
 
@@ -87,7 +107,7 @@ pub async fn execute_bulk<B: Serialize>(
         succeeded = summary.succeeded,
         failed = summary.failed,
         "Bulk {} completed",
-        action
+        action_str
     );
 
     Ok(summary)
@@ -97,7 +117,7 @@ pub async fn execute_bulk<B: Serialize>(
 pub fn parse_bulk_response(
     response_body: &Value,
     metas: &[BulkOperationMeta],
-    action: &str,
+    action: BulkAction,
 ) -> BatchOperationSummary {
     let mut results = Vec::with_capacity(metas.len());
     let mut succeeded = 0;
@@ -109,13 +129,16 @@ pub fn parse_bulk_response(
         .cloned()
         .unwrap_or_default();
 
+    let action_str = action.as_str();
+
     for (i, meta) in metas.iter().enumerate() {
-        let item_result = items.get(i).and_then(|item| item.get(action));
+        let item_result = items.get(i).and_then(|item| item.get(action_str));
 
         let (success, error) = if let Some(result) = item_result {
             let status = result.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
-            let is_success =
-                (200..300).contains(&(status as u16)) || status == 404 && action == "delete"; // 404 on delete is OK
+            // 404 on delete is OK (document not found means it's already deleted)
+            let is_success = (200..300).contains(&(status as u16))
+                || status == 404 && action == BulkAction::Delete;
 
             if is_success {
                 (true, None)
@@ -129,7 +152,7 @@ pub fn parse_bulk_response(
                             .unwrap_or_else(|| e.to_string())
                     })
                     .unwrap_or_else(|| {
-                        format!("Bulk {} failed with status {}", action, status)
+                        format!("Bulk {} failed with status {}", action_str, status)
                     });
                 (false, Some(SearchIndexError::bulk_index(error_msg)))
             }
@@ -165,4 +188,3 @@ pub fn parse_bulk_response(
         results,
     }
 }
-
