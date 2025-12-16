@@ -86,7 +86,6 @@ search-indexer-deploy/
 └── k8s/                 # Kubernetes manifests (production)
     ├── kustomization.yaml
     ├── namespace.yaml
-    ├── opensearch.yaml      # OpenSearch StatefulSet + Service
     ├── search-indexer.yaml  # Search Indexer Deployment
     └── monitoring.yaml      # Prometheus + Grafana + OpenSearch Exporter
 ```
