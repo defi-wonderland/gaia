@@ -3,7 +3,7 @@
 //! Coordinates the consumer, processor, and loader components.
 
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration};
@@ -12,6 +12,7 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::consumer::{KafkaConsumer, StreamMessage};
 use crate::errors::IngestError;
 use crate::loader::SearchLoader;
+use crate::metrics::SearchIndexerMetrics;
 use crate::processor::EntityProcessor;
 
 /// Trait for event consumers used by the orchestrator.
@@ -58,10 +59,7 @@ pub struct Orchestrator {
     loader: SearchLoader,
     config: OrchestratorConfig,
     shutdown_tx: broadcast::Sender<()>,
-    /// Total number of events processed since startup.
-    total_events_processed: Arc<AtomicU64>,
-    /// Total number of documents indexed since startup.
-    total_documents_indexed: Arc<AtomicU64>,
+    metrics: Arc<SearchIndexerMetrics>,
 }
 
 impl Orchestrator {
@@ -79,8 +77,7 @@ impl Orchestrator {
             loader,
             config: OrchestratorConfig::default(),
             shutdown_tx,
-            total_events_processed: Arc::new(AtomicU64::new(0)),
-            total_documents_indexed: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(SearchIndexerMetrics::new()),
         }
     }
 
@@ -99,8 +96,7 @@ impl Orchestrator {
             loader,
             config,
             shutdown_tx,
-            total_events_processed: Arc::new(AtomicU64::new(0)),
-            total_documents_indexed: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(SearchIndexerMetrics::new()),
         }
     }
 
@@ -143,8 +139,9 @@ impl Orchestrator {
         info!("Ready to process events from Kafka");
 
         // Set up progress logging timer (every 10 seconds)
-        let total_events = Arc::clone(&self.total_events_processed);
-        let total_docs = Arc::clone(&self.total_documents_indexed);
+        let metrics = Arc::clone(&self.metrics);
+        let total_events = Arc::clone(&metrics.total_events_processed);
+        let total_docs = Arc::clone(&metrics.total_documents_indexed);
         let mut progress_timer = interval(Duration::from_secs(10));
         progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -250,8 +247,8 @@ impl Orchestrator {
         // Wait for consumer to finish
         let _ = consumer_handle.await;
 
-        let final_events = self.total_events_processed.load(Ordering::Relaxed);
-        let final_docs = self.total_documents_indexed.load(Ordering::Relaxed);
+        let final_events = self.metrics.total_events_processed.load(Ordering::Relaxed);
+        let final_docs = self.metrics.total_documents_indexed.load(Ordering::Relaxed);
         info!(
             total_events_processed = final_events,
             total_documents_indexed = final_docs,
@@ -269,7 +266,8 @@ impl Orchestrator {
         events: Vec<crate::consumer::EntityEvent>,
     ) -> Result<(), IngestError> {
         let event_count = events.len();
-        self.total_events_processed
+        self.metrics
+            .total_events_processed
             .fetch_add(event_count as u64, Ordering::Relaxed);
 
         debug!(event_count = event_count, "Processing batch of events");
@@ -304,7 +302,8 @@ impl Orchestrator {
         }
 
         // Only update the count if there are 0 failed indexes
-        self.total_documents_indexed
+        self.metrics
+            .total_documents_indexed
             .fetch_add(index_count as u64, Ordering::Relaxed);
 
         Ok(())
