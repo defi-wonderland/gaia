@@ -13,7 +13,6 @@ docker-compose up
 
 Services:
 - **OpenSearch REST API**: `http://localhost:9200`
-- **OpenSearch Dashboards**: `http://localhost:5601`
 - **Grafana**: `http://localhost:4040` (admin/admin)
 - **Prometheus**: `http://localhost:9090`
 - **OpenSearch Exporter**: `http://localhost:9114`
@@ -92,10 +91,10 @@ search-indexer-deploy/
 
 ## Resource Configuration
 
-| Environment | OpenSearch RAM | OpenSearch Heap | Dashboards RAM | Grafana RAM | Prometheus RAM |
-|-------------|----------------|-----------------|----------------|-------------|----------------|
-| Production  | 6 GB           | 3 GB            | 1 GB           | 2 GB        | 512 MB         |
-| Local       | 2 GB           | 1 GB            | 512 MB         | 1 GB        | 256 MB         |
+| Environment | OpenSearch RAM | OpenSearch Heap | Grafana RAM | Prometheus RAM |
+|-------------|----------------|-----------------|-------------|----------------|
+| Production  | 6 GB           | 3 GB            | 2 GB        | 512 MB         |
+| Local       | 2 GB           | 1 GB            | 1 GB        | 256 MB         |
 
 ## Services
 
@@ -103,7 +102,6 @@ search-indexer-deploy/
 |---------|------|-------------|
 | OpenSearch REST API | 9200 | Search and indexing API |
 | OpenSearch Transport | 9300 | Inter-node communication |
-| OpenSearch Dashboards | 5601 | Web UI for OpenSearch queries |
 | Grafana | 4040 (NodePort: 30440) | Metrics dashboards (HTTP, publicly accessible) |
 | Prometheus | 9090 | Metrics collection and querying |
 | OpenSearch Exporter | 9114 | Prometheus metrics exporter |
