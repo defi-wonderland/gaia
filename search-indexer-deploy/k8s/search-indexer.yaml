@@ -36,14 +36,6 @@ spec:
             # OpenSearch connection (same namespace, use simple service name)
             - name: OPENSEARCH_URL
               value: "http://opensearch:9200"
-            # OpenSearch connection mode and retry settings
-            - name: OPENSEARCH_CONNECTION_MODE
-              value: "retry"
-            - name: OPENSEARCH_RETRY_INTERVAL_SECS
-              value: "15"
-            # Index alias (defaults to "entities" if not set)
-            - name: INDEX_ALIAS
-              value: "entities"
             # Index version (defaults to 0 if not set)
             - name: ENTITIES_INDEX_VERSION
               value: "0"
@@ -68,11 +60,7 @@ spec:
                 secretKeyRef:
                   name: kafka-credentials
                   key: KAFKA_SSL_CA_PEM
-            - name: KAFKA_GROUP_ID
-              value: "search-indexer"
             # Kafka consumer configuration
-            - name: KAFKA_TOPIC
-              value: "knowledge.edits"
             - name: KAFKA_BATCH_SIZE
               value: "50"
             - name: KAFKA_BATCH_TIMEOUT_MS
