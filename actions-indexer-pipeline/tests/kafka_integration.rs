@@ -48,7 +48,7 @@ fn create_test_vote(
     HermesVoteCast {
         voter_id: voter_id.as_bytes().to_vec(),
         object_id: object_id.as_bytes().to_vec(),
-        object_type: 0u32.to_le_bytes().to_vec(), // Entity
+        object_type: 0u32.to_be_bytes().to_vec(), // Entity (big-endian, Solidity bytes4)
         direction: direction as i32,
         data,
         meta: Some(BlockchainMetadata {
@@ -177,8 +177,8 @@ fn test_full_conversion_pipeline_relation_object_type() {
         VoteDirection::Up,
         1,
     );
-    // Change object_type to Relation (1)
-    vote.object_type = 1u32.to_le_bytes().to_vec();
+    // Change object_type to Relation (1) - big-endian to match Solidity bytes4
+    vote.object_type = 1u32.to_be_bytes().to_vec();
 
     let payload = encode_vote(&vote);
     let decoded_vote = HermesVoteCast::decode(payload.as_slice()).unwrap();
@@ -215,7 +215,7 @@ fn test_conversion_error_invalid_data_length() {
     let vote = HermesVoteCast {
         voter_id: voter_id.as_bytes().to_vec(),
         object_id: object_id.as_bytes().to_vec(),
-        object_type: 0u32.to_le_bytes().to_vec(),
+        object_type: 0u32.to_be_bytes().to_vec(),
         direction: VoteDirection::Up as i32,
         data: vec![0; 50], // Invalid: should be 96 bytes
         meta: Some(BlockchainMetadata {
@@ -238,7 +238,7 @@ fn test_conversion_error_missing_metadata() {
     let vote = HermesVoteCast {
         voter_id: voter_id.as_bytes().to_vec(),
         object_id: object_id.as_bytes().to_vec(),
-        object_type: 0u32.to_le_bytes().to_vec(),
+        object_type: 0u32.to_be_bytes().to_vec(),
         direction: VoteDirection::Up as i32,
         data: vec![0; 96],
         meta: None, // Missing metadata
