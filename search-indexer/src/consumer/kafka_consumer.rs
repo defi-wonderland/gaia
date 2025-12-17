@@ -15,8 +15,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::consumer::messages::{EntityEvent, StreamMessage};
+use crate::consumer::messages::EntityEvent;
 use crate::errors::IngestError;
+use crate::orchestrator::ProcessingBatch;
 
 use hermes_schema::pb::knowledge::HermesEdit;
 use indexer_utils::id::transform_id_bytes;
@@ -142,13 +143,14 @@ impl KafkaConsumer {
     /// # Arguments
     ///
     /// * `sender` - Channel to send messages to
-    /// * `ack_receiver` - Channel to receive acknowledgments from orchestrator
+    /// * `processor_tx` - Channel to send events to processor
+    /// * `ack_receiver` - Channel to receive acknowledgments from loader
     /// * `shutdown` - Shutdown signal receiver
-    #[instrument(skip(self, sender, ack_receiver, shutdown))]
+    #[instrument(skip(self, processor_tx, ack_receiver, shutdown))]
     pub async fn run(
         &self,
-        sender: mpsc::Sender<StreamMessage>,
-        mut ack_receiver: mpsc::Receiver<StreamMessage>,
+        processor_tx: mpsc::Sender<ProcessingBatch>,
+        mut ack_receiver: mpsc::Receiver<crate::consumer::messages::StreamMessage>,
         mut shutdown: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), IngestError> {
         use futures::StreamExt;
@@ -187,13 +189,13 @@ impl KafkaConsumer {
                     info!("Consumer received shutdown signal");
                     // Don't flush pending messages - they haven't been committed
                     // and will be re-read from the last committed offset on restart
-                    let _ = sender.send(StreamMessage::End).await;
+                    // Just close the processor channel by dropping our sender
                     break;
                 }
-                // Handle acknowledgments from orchestrator
+                // Handle acknowledgments from loader
                 ack_msg = ack_receiver.recv() => {
                     match ack_msg {
-                        Some(StreamMessage::Acknowledgment { offsets, success, error }) => {
+                        Some(crate::consumer::messages::StreamMessage::Acknowledgment { offsets, success, error }) => {
                             if success {
                                 if let Err(e) = self.commit_offsets(&offsets).await {
                                     error!(error = %e, "Failed to commit offsets after acknowledgment");
@@ -208,7 +210,7 @@ impl KafkaConsumer {
                                 );
                             }
                         }
-                        Some(StreamMessage::End) | None => {
+                        Some(crate::consumer::messages::StreamMessage::End) | None => {
                             info!("Acknowledgment channel closed");
                             break;
                         }
@@ -234,7 +236,7 @@ impl KafkaConsumer {
                                     // Flush if batch is full
                                     if batch.len() >= self.batch_size {
                                         let offsets_to_send = pending_offsets.clone();
-                                        self.flush_batch(&batch, &offsets_to_send, &sender).await?;
+                                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
                                         batch.clear();
                                         pending_offsets.clear();
                                     }
@@ -275,16 +277,17 @@ impl KafkaConsumer {
                         }
                         Some(Err(e)) => {
                             error!(error = %e, "Kafka error");
-                            let _ = sender.send(StreamMessage::Error(e.to_string())).await;
+                            // On Kafka error, we can't send to processor, just log and continue
+                            // The error will be handled by retrying or shutting down
                         }
                         None => {
                             info!("Kafka stream ended");
                             // Flush any pending messages
                             if !batch.is_empty() {
                                 let offsets_to_send = pending_offsets.clone();
-                                self.flush_batch(&batch, &offsets_to_send, &sender).await?;
+                                self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
                             }
-                            let _ = sender.send(StreamMessage::End).await;
+                            // Channel will be closed when we drop processor_tx
                             break;
                         }
                     }
@@ -294,7 +297,7 @@ impl KafkaConsumer {
                     if !batch.is_empty() {
                         debug!(count = batch.len(), "Flushing batch due to timeout");
                         let offsets_to_send = pending_offsets.clone();
-                        self.flush_batch(&batch, &offsets_to_send, &sender).await?;
+                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
                         batch.clear();
                         pending_offsets.clear();
                     }
@@ -310,7 +313,7 @@ impl KafkaConsumer {
         &self,
         batch: &[PendingMessage],
         offsets: &[(String, i32, i64)],
-        sender: &mpsc::Sender<StreamMessage>,
+        processor_tx: &mpsc::Sender<ProcessingBatch>,
     ) -> Result<(), IngestError> {
         if batch.is_empty() {
             return Ok(());
@@ -323,16 +326,18 @@ impl KafkaConsumer {
         }
 
         if !all_events.is_empty() {
+            let event_count = all_events.len();
             info!(
-                event_count = all_events.len(),
+                event_count = event_count,
                 message_count = batch.len(),
                 offset_count = offsets.len(),
                 "Sending batch of events to processor"
             );
-            sender
-                .send(StreamMessage::Events {
+            processor_tx
+                .send(ProcessingBatch {
                     events: all_events,
                     offsets: offsets.to_vec(),
+                    event_count,
                 })
                 .await
                 .map_err(|e| IngestError::ChannelError(e.to_string()))?;

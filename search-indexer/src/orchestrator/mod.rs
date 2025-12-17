@@ -7,13 +7,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
-use crate::consumer::{KafkaConsumer, StreamMessage};
+use crate::consumer::{EntityEvent, KafkaConsumer, StreamMessage};
 use crate::errors::IngestError;
 use crate::loader::SearchLoader;
 use crate::metrics::SearchIndexerMetrics;
-use crate::processor::EntityProcessor;
+use crate::processor::{EntityProcessor, ProcessedEvent};
 
 /// Trait for event consumers used by the orchestrator.
 /// This allows for dependency injection and testing with mock consumers.
@@ -22,10 +22,10 @@ pub trait Consumer: Send + Sync {
     /// Subscribe to the configured topics/channels.
     fn subscribe(&self) -> Result<(), IngestError>;
 
-    /// Run the consumer, sending messages through the provided channel.
+    /// Run the consumer, sending events to processor and receiving acknowledgments from loader.
     async fn run(
         &self,
-        sender: mpsc::Sender<StreamMessage>,
+        processor_tx: mpsc::Sender<ProcessingBatch>,
         ack_receiver: mpsc::Receiver<StreamMessage>,
         shutdown: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), IngestError>;
@@ -38,6 +38,24 @@ pub struct OrchestratorConfig {
     pub channel_buffer_size: usize,
 }
 
+/// Processed batch ready for loading with associated offsets for acknowledgment.
+#[derive(Debug)]
+pub struct ProcessedBatch {
+    pub events: Vec<ProcessedEvent>,
+    pub offsets: Vec<(String, i32, i64)>, // Kafka offsets for acknowledgment
+    pub index_count: usize,               // Number of index operations for metrics
+}
+
+/// Batch of events to be processed with their offsets.
+#[derive(Debug, Clone)]
+pub struct ProcessingBatch {
+    pub events: Vec<EntityEvent>,
+    pub offsets: Vec<(String, i32, i64)>, // Kafka offsets for acknowledgment
+    pub event_count: usize,               // Number of events for metrics
+}
+
+// ProcessingResult is no longer needed - processor sends directly to loader
+
 impl Default for OrchestratorConfig {
     fn default() -> Self {
         Self {
@@ -49,10 +67,19 @@ impl Default for OrchestratorConfig {
 /// Orchestrator that coordinates the ingest components.
 ///
 /// The orchestrator:
-/// - Manages the lifecycle of ingest components
-/// - Routes messages between components
-/// - Handles shutdown signals
-/// - Monitors ingest health
+/// - Sets up channels for direct component-to-component communication
+/// - Spawns all component tasks (consumer, processor, loader)
+/// - Monitors for shutdown signals and component completion
+/// - Tracks and logs metrics
+///
+/// Components communicate directly with each other:
+/// - Consumer → Processor (via ProcessingBatch channel)
+/// - Processor → Loader (via ProcessedBatch channel)
+/// - Loader → Consumer (via Acknowledgment channel)
+///
+/// Each component has a `run()` method that accepts its required channels
+/// and returns a tokio task handle, allowing the orchestrator to simply
+/// coordinate startup and shutdown without routing messages.
 pub struct Orchestrator {
     consumer: Arc<dyn Consumer>,
     processor: EntityProcessor,
@@ -105,43 +132,72 @@ impl Orchestrator {
     /// This method starts all ingest components and coordinates message flow.
     /// It blocks until a shutdown signal is received or an error occurs.
     #[instrument(skip(self))]
-    pub async fn run(&mut self) -> Result<(), IngestError> {
+    pub async fn run(self) -> Result<(), IngestError> {
         info!("Starting search indexer orchestrator");
 
+        // Take ownership of components to avoid partial moves
+        let consumer = self.consumer;
+        let processor = self.processor;
+        let loader = self.loader;
+        let config = self.config;
+        let shutdown_tx = self.shutdown_tx;
+        let metrics = self.metrics;
+
         // Check if loader is ready
-        self.loader.check_ready().await?;
+        loader.check_ready().await?;
 
         // Subscribe to Kafka topics
-        self.consumer.subscribe()?;
+        consumer.subscribe()?;
 
-        // Create event channel
-        let (event_transmitter, mut event_receiver) =
-            mpsc::channel::<StreamMessage>(self.config.channel_buffer_size);
+        // Create channels for direct component-to-component communication:
+        // Consumer -> Processor -> Loader -> Consumer (for acks)
 
-        // Create acknowledgment channel
-        let (ack_transmitter, ack_receiver) =
-            mpsc::channel::<StreamMessage>(self.config.channel_buffer_size);
+        // Channel from consumer to processor
+        let (processor_tx, processor_rx) =
+            mpsc::channel::<ProcessingBatch>(config.channel_buffer_size);
 
-        // Start consumer in background
-        let consumer = self.consumer.clone();
-        let shutdown_rx = self.shutdown_tx.subscribe();
+        // Channel from processor to loader
+        let (loader_tx, loader_rx) = mpsc::channel::<ProcessedBatch>(config.channel_buffer_size);
 
+        // Channel from loader back to consumer (for acknowledgments)
+        let (ack_tx, ack_receiver) = mpsc::channel::<StreamMessage>(config.channel_buffer_size);
+
+        // Clone senders for components that need them
+        let processor_tx_for_consumer = processor_tx.clone();
+        let loader_tx_for_processor = loader_tx.clone();
+        let ack_tx_for_processor = ack_tx.clone();
+        let ack_tx_for_loader = ack_tx.clone();
+
+        // Start processor task - receives from consumer, sends to loader
+        let processor_handle = processor.run(
+            processor_rx,
+            loader_tx_for_processor,
+            ack_tx_for_processor,
+            Arc::clone(&metrics),
+        );
+
+        // Start consumer task - sends to processor, receives acks from loader
+        let consumer_clone = Arc::clone(&consumer);
+        let shutdown_rx = shutdown_tx.subscribe();
         let consumer_handle = tokio::spawn(async move {
-            if let Err(e) = consumer
-                .run(event_transmitter, ack_receiver, shutdown_rx)
+            consumer_clone
+                .run(processor_tx_for_consumer, ack_receiver, shutdown_rx)
                 .await
-            {
-                error!(error = %e, "Consumer error");
-            }
         });
+        // So that we can await it later on shutdown
+        tokio::pin!(consumer_handle);
 
-        // Process messages
-        info!("Ready to process events from Kafka");
+        // Start loader task - receives from processor, sends acks to consumer
+        let loader_handle = loader.run(loader_rx, ack_tx_for_loader, Arc::clone(&metrics));
+
+        // Orchestrator now just monitors for shutdown and metrics
+        // Components communicate directly with each other
+        info!("Ready to process events from Kafka - components communicating directly");
 
         // Set up progress logging timer (every 10 seconds)
-        let metrics = Arc::clone(&self.metrics);
-        let total_events = Arc::clone(&metrics.total_events_processed);
-        let total_docs = Arc::clone(&metrics.total_documents_indexed);
+        let metrics_ref = Arc::clone(&metrics);
+        let total_events = Arc::clone(&metrics_ref.total_events_processed);
+        let total_docs = Arc::clone(&metrics_ref.total_documents_indexed);
         let mut progress_timer = interval(Duration::from_secs(10));
         progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -152,56 +208,9 @@ impl Orchestrator {
 
         loop {
             tokio::select! {
-                msg = event_receiver.recv() => {
-                    match msg {
-                        Some(StreamMessage::Events { events, offsets }) => {
-                            info!(
-                                event_count = events.len(),
-                                offset_count = offsets.len(),
-                                "Received events from consumer"
-                            );
-                            match self.process_events(events).await {
-                                Ok(()) => {
-                                    // Send success acknowledgment
-                                    if let Err(send_err) = ack_transmitter.send(StreamMessage::Acknowledgment {
-                                        offsets,
-                                        success: true,
-                                        error: None,
-                                    }).await {
-                                        error!(error = %send_err, "Failed to send success acknowledgment - channel closed");
-                                        return Err(IngestError::ChannelError(format!("Failed to send success acknowledgment: {}", send_err)));
-                                    }
-                                }
-                                Err(e) => {
-                                    error!(error = %e, "Failed to process events. Sending NACK to broker");
-                                    // Send failure acknowledgment
-                                    if let Err(send_err) = ack_transmitter.send(StreamMessage::Acknowledgment {
-                                        offsets,
-                                        success: false,
-                                        error: Some(e.to_string()),
-                                    }).await {
-                                        error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
-                                        return Err(IngestError::ChannelError(format!("Failed to send failure acknowledgment: {}", send_err)));
-                                    }
-                                }
-                            }
-                        }
-                        Some(StreamMessage::Error(e)) => {
-                            error!(error = %e, "Received error from consumer");
-                        }
-                        Some(StreamMessage::End) | None => {
-                            info!("Consumer stream ended");
-                            break;
-                        }
-                        Some(StreamMessage::Acknowledgment { .. }) => {
-                            // Ignore acknowledgments received on the wrong channel
-                            warn!("Received acknowledgment on event channel (should be on ack channel)");
-                        }
-                    }
-                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("Received shutdown signal");
-                    let _ = self.shutdown_tx.send(());
+                    let _ = shutdown_tx.send(());
                     break;
                 }
                 _ = progress_timer.tick() => {
@@ -240,78 +249,35 @@ impl Orchestrator {
             }
         }
 
-        // Don't flush remaining documents on shutdown - we can't ACK them to Kafka anyway
-        // since the consumer is shutting down. Any pending documents will be re-consumed
-        // on next startup (at-least-once delivery semantics).
+        // Close channels to signal components to finish
+        // Order matters: close producer channels first, then wait for consumers
 
-        // Wait for consumer to finish
+        // Close processor channel (consumer stops sending)
+        drop(processor_tx);
+
+        // Close loader channel (processor stops sending)
+        drop(loader_tx);
+
+        // Wait for processor to finish
+        let _ = processor_handle.await;
+
+        // Wait for loader to finish processing all batches and send final acks
+        let _ = loader_handle.await;
+
+        // Close ack channel (loader stops sending, signals consumer)
+        drop(ack_tx);
+
+        // Wait for consumer to finish (it will exit when ack channel closes or on shutdown signal)
         let _ = consumer_handle.await;
 
-        let final_events = self.metrics.total_events_processed.load(Ordering::Relaxed);
-        let final_docs = self.metrics.total_documents_indexed.load(Ordering::Relaxed);
+        let final_events = metrics.total_events_processed.load(Ordering::Relaxed);
+        let final_docs = metrics.total_documents_indexed.load(Ordering::Relaxed);
         info!(
             total_events_processed = final_events,
             total_documents_indexed = final_docs,
             "Orchestrator shutdown complete"
         );
         Ok(())
-    }
-
-    /// Process a batch of events through the ingest.
-    ///
-    /// This method ensures documents are actually indexed in OpenSearch before returning Ok.
-    /// The caller should only ACK to Kafka after this method returns successfully.
-    async fn process_events(
-        &mut self,
-        events: Vec<crate::consumer::EntityEvent>,
-    ) -> Result<(), IngestError> {
-        let event_count = events.len();
-        self.metrics
-            .total_events_processed
-            .fetch_add(event_count as u64, Ordering::Relaxed);
-
-        debug!(event_count = event_count, "Processing batch of events");
-
-        // Transform events to documents
-        let processed = self.processor.process_batch(events)?;
-
-        if processed.is_empty() {
-            debug!("No documents to index after processing");
-            return Ok(());
-        }
-
-        // Count documents to be indexed
-        let index_count = processed
-            .iter()
-            .filter(|e| matches!(e, crate::processor::ProcessedEvent::Index(_)))
-            .count();
-
-        // Load into search index and process all operations immediately.
-        // This ensures we only ACK to Kafka after documents are actually indexed.
-        let operation_summaries = self.loader.load(processed).await?;
-
-        // Check if any operation had failures
-        let total_failed = operation_summaries.iter().map(|s| s.failed).sum::<usize>();
-        if total_failed > 0 {
-            // At least one indexing operation failed, return error to trigger NACK
-            return Err(IngestError::LoaderError(format!(
-                "Bulk operations completed with {} failures across {} operations",
-                total_failed,
-                operation_summaries.len()
-            )));
-        }
-
-        // Only update the count if there are 0 failed indexes
-        self.metrics
-            .total_documents_indexed
-            .fetch_add(index_count as u64, Ordering::Relaxed);
-
-        Ok(())
-    }
-
-    /// Trigger a graceful shutdown.
-    pub fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(());
     }
 }
 
@@ -323,10 +289,10 @@ impl Consumer for KafkaConsumer {
 
     async fn run(
         &self,
-        sender: mpsc::Sender<StreamMessage>,
+        processor_tx: mpsc::Sender<ProcessingBatch>,
         ack_receiver: mpsc::Receiver<StreamMessage>,
         shutdown: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), IngestError> {
-        self.run(sender, ack_receiver, shutdown).await
+        self.run(processor_tx, ack_receiver, shutdown).await
     }
 }

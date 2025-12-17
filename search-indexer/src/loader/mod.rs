@@ -2,10 +2,16 @@
 //!
 //! Loads processed documents into the search index using UpdateEntityRequest.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, instrument, warn};
 
+use crate::consumer::StreamMessage;
 use crate::errors::IngestError;
+use crate::metrics::SearchIndexerMetrics;
+use crate::orchestrator::ProcessedBatch;
 use crate::processor::ProcessedEvent;
 use search_indexer_repository::{
     DeleteEntityRequest, SearchIndexProvider, UnsetEntityPropertiesRequest, UpdateEntityRequest,
@@ -223,6 +229,82 @@ impl SearchLoader {
     pub async fn check_ready(&self) -> Result<(), IngestError> {
         // The provider is ready if it was created successfully
         Ok(())
+    }
+
+    /// Run the loader task.
+    ///
+    /// Receives processed batches from the processor, loads them into the search index,
+    /// and sends acknowledgments back to the consumer.
+    /// Returns a tokio task handle.
+    pub fn run(
+        mut self,
+        mut loader_rx: mpsc::Receiver<ProcessedBatch>,
+        ack_tx: mpsc::Sender<StreamMessage>,
+        metrics: Arc<SearchIndexerMetrics>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Some(batch) = loader_rx.recv().await {
+                match self.load(batch.events).await {
+                    Ok(operation_summaries) => {
+                        // Check if any operation had failures
+                        let total_failed =
+                            operation_summaries.iter().map(|s| s.failed).sum::<usize>();
+                        if total_failed > 0 {
+                            // At least one indexing operation failed, send NACK
+                            error!(
+                                "Bulk operations completed with {} failures across {} operations",
+                                total_failed,
+                                operation_summaries.len()
+                            );
+                            if let Err(send_err) = ack_tx
+                                .send(StreamMessage::Acknowledgment {
+                                    offsets: batch.offsets,
+                                    success: false,
+                                    error: Some(format!(
+                                        "Bulk operations completed with {} failures",
+                                        total_failed
+                                    )),
+                                })
+                                .await
+                            {
+                                error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
+                            }
+                        } else {
+                            // All operations successful, send ACK
+                            if let Err(send_err) = ack_tx
+                                .send(StreamMessage::Acknowledgment {
+                                    offsets: batch.offsets,
+                                    success: true,
+                                    error: None,
+                                })
+                                .await
+                            {
+                                error!(error = %send_err, "Failed to send success acknowledgment - channel closed");
+                            }
+
+                            // Update metrics
+                            metrics
+                                .total_documents_indexed
+                                .fetch_add(batch.index_count as u64, Ordering::Relaxed);
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to load batch");
+                        if let Err(send_err) = ack_tx
+                            .send(StreamMessage::Acknowledgment {
+                                offsets: batch.offsets,
+                                success: false,
+                                error: Some(e.to_string()),
+                            })
+                            .await
+                        {
+                            error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
+                        }
+                    }
+                }
+            }
+            debug!("Loader task shutting down");
+        })
     }
 }
 

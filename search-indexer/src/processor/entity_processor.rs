@@ -2,10 +2,17 @@
 //!
 //! Transforms entity events into EntityDocument structures for indexing.
 
-use tracing::{debug, instrument};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, instrument};
 
+use crate::consumer::StreamMessage;
 use crate::consumer::{EntityEvent, EntityEventType};
 use crate::errors::IngestError;
+use crate::metrics::SearchIndexerMetrics;
+use crate::orchestrator::{ProcessedBatch, ProcessingBatch};
 use search_indexer_shared::EntityDocument;
 
 /// Processed result from the entity processor.
@@ -66,6 +73,86 @@ impl EntityProcessor {
 
         debug!(processed_count = processed.len(), "Processed event batch");
         Ok(processed)
+    }
+
+    /// Run the processor task.
+    ///
+    /// Receives batches from the consumer, processes them, and sends results to the loader.
+    /// Returns a tokio task handle.
+    pub fn run(
+        self,
+        mut processor_rx: mpsc::Receiver<ProcessingBatch>,
+        loader_tx: mpsc::Sender<ProcessedBatch>,
+        ack_tx: mpsc::Sender<StreamMessage>,
+        metrics: Arc<SearchIndexerMetrics>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Some(batch) = processor_rx.recv().await {
+                let ProcessingBatch {
+                    events,
+                    offsets,
+                    event_count,
+                } = batch;
+
+                match self.process_batch(events) {
+                    Ok(processed_events) => {
+                        // Update event processing metrics
+                        metrics
+                            .total_events_processed
+                            .fetch_add(event_count as u64, Ordering::Relaxed);
+
+                        if processed_events.is_empty() {
+                            debug!("No documents to index after processing, sending ACK directly");
+                            // Send immediate ACK since there's nothing to load
+                            if let Err(send_err) = ack_tx
+                                .send(StreamMessage::Acknowledgment {
+                                    offsets,
+                                    success: true,
+                                    error: None,
+                                })
+                                .await
+                            {
+                                error!(error = %send_err, "Failed to send acknowledgment - channel closed");
+                            }
+                            continue;
+                        }
+
+                        // Calculate index count for metrics
+                        let index_count = processed_events
+                            .iter()
+                            .filter(|e| matches!(e, ProcessedEvent::Index(_)))
+                            .count();
+
+                        // Send processed batch to loader
+                        let processed_batch = ProcessedBatch {
+                            events: processed_events,
+                            offsets,
+                            index_count,
+                        };
+
+                        if let Err(send_err) = loader_tx.send(processed_batch).await {
+                            error!(error = %send_err, "Failed to send batch to loader - channel closed");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to process events, sending NACK to consumer");
+                        // On processing error, send NACK to consumer
+                        if let Err(send_err) = ack_tx
+                            .send(StreamMessage::Acknowledgment {
+                                offsets,
+                                success: false,
+                                error: Some(e.to_string()),
+                            })
+                            .await
+                        {
+                            error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
+                        }
+                    }
+                }
+            }
+            debug!("Processor task shutting down");
+        })
     }
 
     /// Process a single entity event.

@@ -25,11 +25,11 @@ docker-compose up -d
 ## Overview
 
 The search indexer consumes entity events from Kafka and indexes them into OpenSearch
-for fast full-text search across the Knowledge Graph.
+for fast full-text search across the Geo Knowledge Graph.
 
 ## Architecture
 
-The indexer follows the Consumer-Processor-Loader pattern:
+The indexer follows the Consumer-Processor-Loader pattern using tokio tasks for each component:
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -37,16 +37,18 @@ The indexer follows the Consumer-Processor-Loader pattern:
 │  (Kafka)    │     │ (Transform) │     │ (OpenSearch)│
 └─────────────┘     └─────────────┘     └─────────────┘
         │                                      │
+        │      ◀──      ack/nack     ◀──       │
         └──────────────────────────────────────┘
-                    Orchestrator
+                     Orchestrator 
+                (Setup channels and tasks)
 ```
 
 ### Components
 
-- **Consumer**: Consumes entity events from Kafka topics (`knowledge.edits`)
-- **Processor**: Transforms raw Kafka events into `EntityDocument` structures
-- **Loader**: Batches and indexes documents into OpenSearch using `UpdateEntityRequest`
-- **Orchestrator**: Coordinates message flow between components, handles shutdown signals
+- **Consumer**: Consumes entity events from Kafka topics (`knowledge.edits`) and sends them directly to the processor via channels
+- **Processor**: Transforms raw Kafka events into `EntityDocument` structures and sends them directly to the loader. Runs in its own tokio task with a `run()` method that accepts channels and returns a task handle.
+- **Loader**: Batches and indexes documents into OpenSearch using `UpdateEntityRequest` and sends acknowledgments directly back to the consumer. Runs in its own tokio task with a `run()` method that accepts channels and returns a task handle.
+- **Orchestrator**: Sets up channels between components, spawns all tasks, monitors for shutdown signals, and tracks metrics. Components communicate directly with each other without going through the orchestrator.
 
 ## Configuration
 

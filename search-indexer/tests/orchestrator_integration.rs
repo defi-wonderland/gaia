@@ -11,7 +11,7 @@ use tokio::time::timeout;
 use search_indexer::consumer::{EntityEvent, StreamMessage};
 use search_indexer::errors::IngestError;
 use search_indexer::loader::SearchLoader;
-use search_indexer::orchestrator::{Consumer, Orchestrator, OrchestratorConfig};
+use search_indexer::orchestrator::{Consumer, Orchestrator, OrchestratorConfig, ProcessingBatch};
 use search_indexer::processor::EntityProcessor;
 use search_indexer_repository::{
     BatchOperationResult, BatchOperationSummary, DeleteEntityRequest, SearchIndexError,
@@ -64,7 +64,7 @@ impl Consumer for MockConsumer {
 
     async fn run(
         &self,
-        sender: mpsc::Sender<StreamMessage>,
+        processor_tx: mpsc::Sender<ProcessingBatch>,
         mut ack_receiver: mpsc::Receiver<StreamMessage>,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<(), IngestError> {
@@ -73,25 +73,35 @@ impl Consumer for MockConsumer {
             return Err(IngestError::KafkaError("Mock consumer error".to_string()));
         }
 
-        // Convert events to StreamMessage
+        // Convert events to ProcessingBatch
         let events = self.events_to_send.clone();
         let offsets = vec![("test-topic".to_string(), 0, 1i64)]; // Mock offset
+        let event_count = events.len();
 
-        // Send events
-        let _ = sender.send(StreamMessage::Events { events, offsets }).await;
+        // Send events to processor
+        let batch = ProcessingBatch {
+            events,
+            offsets,
+            event_count,
+        };
+        let _ = processor_tx.send(batch).await;
 
-        // Send End message to signal completion
-        let _ = sender.send(StreamMessage::End).await;
-
-        // Wait for shutdown or acknowledgment
+        // Wait for shutdown or acknowledgment, then exit
         tokio::select! {
             _ = shutdown.recv() => {
                 // Shutdown received
             }
-            Some(StreamMessage::Acknowledgment { success, .. }) = ack_receiver.recv() => {
-                *self.last_acknowledgment.lock().unwrap() = Some(success);
-                if !success {
-                    return Err(IngestError::LoaderError("Processing failed".to_string()));
+            msg = ack_receiver.recv() => {
+                match msg {
+                    Some(StreamMessage::Acknowledgment { success, .. }) => {
+                        *self.last_acknowledgment.lock().unwrap() = Some(success);
+                        if !success {
+                            return Err(IngestError::LoaderError("Processing failed".to_string()));
+                        }
+                    }
+                    Some(_) | None => {
+                        // Channel closed or unexpected message, exit
+                    }
                 }
             }
         }
@@ -479,7 +489,7 @@ async fn test_orchestrator_full_integration() {
         ),
     ];
 
-    let (mut orchestrator, mock_provider) = create_test_orchestrator(events);
+    let (orchestrator, mock_provider) = create_test_orchestrator(events);
 
     // Run the orchestrator with a timeout to avoid hanging
     let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
@@ -500,7 +510,7 @@ async fn test_orchestrator_with_delete_events() {
         EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
     ];
 
-    let (mut orchestrator, mock_provider) = create_test_orchestrator(events);
+    let (orchestrator, mock_provider) = create_test_orchestrator(events);
 
     // Run the orchestrator
     let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
@@ -521,7 +531,7 @@ async fn test_orchestrator_with_unset_properties() {
         vec!["name".to_string(), "description".to_string()],
     )];
 
-    let (mut orchestrator, mock_provider) = create_test_orchestrator(events);
+    let (orchestrator, mock_provider) = create_test_orchestrator(events);
 
     // Run the orchestrator
     let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
@@ -554,7 +564,7 @@ async fn test_orchestrator_configuration() {
 async fn test_empty_event_batch_processing() {
     let events = vec![]; // Empty batch
 
-    let (mut orchestrator, mock_provider) = create_test_orchestrator(events);
+    let (orchestrator, mock_provider) = create_test_orchestrator(events);
 
     // Run the orchestrator with empty events
     let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
@@ -567,9 +577,6 @@ async fn test_empty_event_batch_processing() {
 
 #[tokio::test]
 async fn test_orchestrator_shutdown() {
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
     // Create orchestrator with some events that will keep it running
     let events = vec![EntityEvent::upsert(
         Uuid::new_v4(),
@@ -580,29 +587,16 @@ async fn test_orchestrator_shutdown() {
     )];
 
     let (orchestrator, _mock_provider) = create_test_orchestrator(events);
-    let orchestrator = Arc::new(Mutex::new(orchestrator));
-
-    // Clone for the shutdown task
-    let orchestrator_clone = Arc::clone(&orchestrator);
-
-    // Create a task that will shutdown the orchestrator after a short delay
-    let shutdown_handle = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let orchestrator = orchestrator_clone.lock().await;
-        orchestrator.shutdown();
-    });
 
     // Spawn orchestrator in background
-    let orchestrator_run_clone = Arc::clone(&orchestrator);
-    let orchestrator_handle = tokio::spawn(async move {
-        let mut orchestrator = orchestrator_run_clone.lock().await;
-        orchestrator.run().await
-    });
+    let orchestrator_handle = tokio::spawn(async move { orchestrator.run().await });
 
-    // Wait for both tasks to complete
-    let (shutdown_result, orchestrator_result) = tokio::join!(shutdown_handle, orchestrator_handle);
+    // The orchestrator will complete when the consumer sends End message
+    // Wait for orchestrator to complete
+    let result = timeout(Duration::from_secs(5), orchestrator_handle).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
 
-    assert!(shutdown_result.is_ok(), "Shutdown task should succeed");
+    let orchestrator_result = result.unwrap();
     assert!(
         orchestrator_result.is_ok(),
         "Orchestrator task should succeed"
@@ -626,7 +620,7 @@ async fn test_orchestrator_error_handling() {
         None,
     )];
 
-    let (mut orchestrator, _mock_provider) = create_error_test_orchestrator(events);
+    let (orchestrator, _mock_provider) = create_error_test_orchestrator(events);
 
     // Run the orchestrator - it should fail due to consumer error
     let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
@@ -681,7 +675,7 @@ async fn test_orchestrator_bulk_update_failure_nack() {
         ),
     ];
 
-    let (mut orchestrator, _mock_provider, mock_consumer) =
+    let (orchestrator, _mock_provider, mock_consumer) =
         create_bulk_update_failure_orchestrator(events);
 
     // Run the orchestrator
@@ -714,7 +708,7 @@ async fn test_orchestrator_bulk_delete_failure_nack() {
         EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
     ];
 
-    let (mut orchestrator, _mock_provider, mock_consumer) =
+    let (orchestrator, _mock_provider, mock_consumer) =
         create_bulk_delete_failure_orchestrator(events);
 
     // Run the orchestrator
@@ -751,7 +745,7 @@ async fn test_orchestrator_successful_bulk_operations_ack() {
         EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_test_orchestrator_with_consumer(events);
 
     // Run the orchestrator
@@ -794,7 +788,7 @@ async fn test_bulk_update_success() {
         ),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_test_orchestrator_with_consumer(events);
 
     // Run the orchestrator
@@ -834,7 +828,7 @@ async fn test_bulk_update_partial_failure() {
         ),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_bulk_update_failure_orchestrator(events);
 
     // Run the orchestrator
@@ -868,7 +862,7 @@ async fn test_bulk_delete_success() {
         EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_test_orchestrator_with_consumer(events);
 
     // Run the orchestrator
@@ -896,7 +890,7 @@ async fn test_bulk_delete_partial_failure() {
         EntityEvent::delete(Uuid::new_v4(), Uuid::new_v4()),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_bulk_delete_failure_orchestrator(events);
 
     // Run the orchestrator
@@ -939,7 +933,7 @@ async fn test_bulk_unset_success() {
         EntityEvent::unset_properties(entity_id_2, space_id_2, vec!["avatar".to_string()]),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_test_orchestrator_with_consumer(events);
 
     // Run the orchestrator
@@ -976,7 +970,7 @@ async fn test_bulk_unset_partial_failure() {
         EntityEvent::unset_properties(entity_id_2, space_id_2, vec!["avatar".to_string()]),
     ];
 
-    let (mut orchestrator, mock_provider, mock_consumer) =
+    let (orchestrator, mock_provider, mock_consumer) =
         create_bulk_unset_failure_orchestrator(events);
 
     // Run the orchestrator
