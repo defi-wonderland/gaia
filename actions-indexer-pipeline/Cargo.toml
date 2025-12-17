@@ -41,3 +41,4 @@ semver = "1.0.23"
 futures03 = { version = "0.3.1", package = "futures", features = ["compat"] }
 alloy = "1.0.24"
 uuid = "1.18.0"
+rdkafka = { version = "0.36", features = ["cmake-build", "zstd", "ssl"] }
