@@ -20,7 +20,7 @@ use crate::errors::IngestError;
 
 use hermes_schema::pb::knowledge::HermesEdit;
 use indexer_utils::id::transform_id_bytes;
-use sdk::core::ids::{AVATAR_ATTRIBUTE, DESCRIPTION_ATTRIBUTE, NAME_ATTRIBUTE};
+use sdk::core::ids::{AVATAR_PROPERTY_ID, DESCRIPTION_PROPERTY_ID, NAME_PROPERTY_ID};
 use wire::pb::grc20::op::Payload;
 
 /// Pending message information for batching.
@@ -482,14 +482,14 @@ impl KafkaConsumer {
                                 if let Ok(prop_id_bytes) =
                                     transform_id_bytes(property_bytes.clone())
                                 {
-                                    let property_id = bs58::encode(&prop_id_bytes).into_string();
+                                    let property_id = Uuid::from_bytes(prop_id_bytes).to_string();
 
                                     // Map known property IDs to their search index field names
-                                    if property_id == NAME_ATTRIBUTE {
+                                    if property_id == NAME_PROPERTY_ID {
                                         property_keys.push("name".to_string());
-                                    } else if property_id == DESCRIPTION_ATTRIBUTE {
+                                    } else if property_id == DESCRIPTION_PROPERTY_ID {
                                         property_keys.push("description".to_string());
-                                    } else if property_id == AVATAR_ATTRIBUTE {
+                                    } else if property_id == AVATAR_PROPERTY_ID {
                                         property_keys.push("avatar".to_string());
                                     }
                                     // Other properties are not indexed in search, so we ignore them
@@ -580,35 +580,35 @@ impl KafkaConsumer {
                 Err(_) => continue,
             };
 
-            // Convert property ID bytes to base58 or check against known IDs
-            let property_id = bs58::encode(&property_id_bytes).into_string();
+            // Convert property ID bytes to UUID string for comparison against known IDs
+            let property_id = Uuid::from_bytes(property_id_bytes).to_string();
 
-            if property_id == NAME_ATTRIBUTE {
+            if property_id == NAME_PROPERTY_ID {
                 name = Some(value.value.clone());
-                info!(
+                debug!(
                     entity_id = %entity_id,
                     space_id = %space_id,
                     property_id = %property_id,
                     name_value = %value.value,
-                    "name attribute detected in property edit"
+                    "name property detected in property edit"
                 );
-            } else if property_id == DESCRIPTION_ATTRIBUTE {
+            } else if property_id == DESCRIPTION_PROPERTY_ID {
                 description = Some(value.value.clone());
-                info!(
+                debug!(
                     entity_id = %entity_id,
                     space_id = %space_id,
                     property_id = %property_id,
                     description_value = %value.value,
-                    "description attribute detected in property edit"
+                    "description property detected in property edit"
                 );
-            } else if property_id == AVATAR_ATTRIBUTE {
+            } else if property_id == AVATAR_PROPERTY_ID {
                 avatar = Some(value.value.clone());
-                info!(
+                debug!(
                     entity_id = %entity_id,
                     space_id = %space_id,
                     property_id = %property_id,
                     avatar_value = %value.value,
-                    "avatar attribute detected in property edit"
+                    "avatar property detected in property edit"
                 );
             }
         }
