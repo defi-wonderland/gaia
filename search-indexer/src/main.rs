@@ -7,7 +7,7 @@ use dotenv::dotenv;
 use search_indexer::{Dependencies, IndexingError};
 use std::env;
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize tracing/logging.
 fn init_tracing() -> Result<(), IndexingError> {
@@ -61,7 +61,7 @@ async fn main() -> Result<(), IndexingError> {
     info!("Starting Geo Search Indexer");
 
     // Initialize dependencies
-    let mut deps = match Dependencies::new().await {
+    let deps = match Dependencies::new().await {
         Ok(deps) => {
             info!("Dependencies initialized successfully");
             deps

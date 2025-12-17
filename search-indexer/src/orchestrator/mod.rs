@@ -3,11 +3,11 @@
 //! Coordinates the consumer, processor, and loader components.
 
 use async_trait::async_trait;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::{interval, Duration};
-use tracing::{error, info, instrument};
+use tokio::time::{Duration, interval};
+use tracing::{info, instrument};
 
 use crate::consumer::{EntityEvent, KafkaConsumer, StreamMessage};
 use crate::errors::IngestError;

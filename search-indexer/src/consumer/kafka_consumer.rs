@@ -4,10 +4,10 @@
 
 use prost::Message;
 use rdkafka::{
+    TopicPartitionList,
     config::ClientConfig,
     consumer::{Consumer, StreamConsumer},
     message::Message as KafkaMessage,
-    TopicPartitionList,
 };
 use std::env;
 use std::time::Duration;
@@ -142,7 +142,6 @@ impl KafkaConsumer {
     ///
     /// # Arguments
     ///
-    /// * `sender` - Channel to send messages to
     /// * `processor_tx` - Channel to send events to processor
     /// * `ack_receiver` - Channel to receive acknowledgments from loader
     /// * `shutdown` - Shutdown signal receiver
