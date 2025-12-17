@@ -40,6 +40,10 @@ pub enum ConsumerError {
     InvalidActionType(String),
     #[error("Invalid object type: {0}")]
     InvalidObjectType(String),
+    #[error("Invalid vote direction: {0}")]
+    InvalidVoteDirection(String),
+    #[error("Invalid data field: {0}")]
+    InvalidDataField(String),
     // Kafka-specific errors
     #[error("Kafka connection error: {0}")]
     KafkaConnection(String),

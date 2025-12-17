@@ -356,15 +356,15 @@ impl TryFrom<&Action> for ActionRaw {
 
     fn try_from(action: &Action) -> Result<Self, Self::Error> {
         Ok(ActionRaw {
-            sender: action.sender.parse()
-                .map_err(|e| ConsumerError::InvalidAddress(format!("sender: {}", e)))?,
+            user_id: action.sender.parse()
+                .map_err(|e| ConsumerError::InvalidUuid(format!("user_id: {}", e)))?,
             action_type: match action.action_type {
                 0 => ActionType::Vote,
                 _ => return Err(ConsumerError::InvalidActionType(format!("action_type: {}", action.action_type))),
             },
             action_version: action.action_version,
             space_pov: action.space_pov.parse()
-                .map_err(|e| ConsumerError::InvalidAddress(format!("space_pov: {}", e)))?,
+                .map_err(|e| ConsumerError::InvalidUuid(format!("space_pov: {}", e)))?,
             object_id: action.object_id.parse()
                 .map_err(|e| ConsumerError::InvalidUuid(format!("entity: {}", e)))?,
             group_id: if action.group_id.is_some() {
