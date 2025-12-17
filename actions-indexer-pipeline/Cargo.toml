@@ -15,7 +15,9 @@ sqlx = { version = "0.8", features = [
 ] }
 thiserror = "2.0.12"
 actions-indexer-shared = { path = "../actions-indexer-shared" }
-actions-indexer-repository = { path = "../actions-indexer-repository" } 
+actions-indexer-repository = { path = "../actions-indexer-repository" }
+hermes-schema = { path = "../hermes-schema" }
+hermes-kafka = { path = "../hermes-kafka" }
 anyhow = "1"
 async-stream = "0.3"
 reqwest = "0.11"
