@@ -40,4 +40,13 @@ pub enum ConsumerError {
     InvalidActionType(String),
     #[error("Invalid object type: {0}")]
     InvalidObjectType(String),
+    // Kafka-specific errors
+    #[error("Kafka connection error: {0}")]
+    KafkaConnection(String),
+    #[error("Kafka subscription error: {0}")]
+    KafkaSubscription(String),
+    #[error("Kafka consume error: {0}")]
+    KafkaConsume(String),
+    #[error("Kafka commit error: {0}")]
+    KafkaCommit(String),
 }
