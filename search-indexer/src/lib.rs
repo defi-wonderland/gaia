@@ -19,6 +19,7 @@
 //! - [`processor`]: Transforms events into documents
 //! - [`loader`]: Indexes documents into OpenSearch
 //! - [`orchestrator`]: Coordinates the ingest flow
+//! - [`metrics`]: Metrics and telemetry for the indexer
 //! - [`errors`]: Error types for the indexer
 
 pub mod config;
