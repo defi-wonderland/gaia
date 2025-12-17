@@ -30,25 +30,4 @@ pub mod orchestrator;
 pub mod processor;
 
 pub use config::Dependencies;
-pub use errors::IngestError;
-
-use thiserror::Error;
-
-/// Errors that can occur during indexer initialization or execution.
-#[derive(Error, Debug)]
-pub enum IndexingError {
-    /// Configuration error.
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-
-    /// Ingest error.
-    #[error("Ingest error: {0}")]
-    IngestError(#[from] IngestError),
-}
-
-impl IndexingError {
-    /// Create a configuration error.
-    pub fn config(msg: impl Into<String>) -> Self {
-        Self::ConfigError(msg.into())
-    }
-}
+pub use errors::{IndexingError, IngestError};
