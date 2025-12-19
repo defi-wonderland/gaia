@@ -36,30 +36,17 @@ impl KafkaStreamProvider {
         Self { config }
     }
 
-    /// Creates a new `KafkaStreamProvider` from environment variables.
-    ///
-    /// Uses the following defaults:
-    /// - Broker: `localhost:9092`
-    /// - Group ID: `actions-indexer`
-    /// - Topic: `curation.votes`
-    ///
-    /// # Returns
-    ///
-    /// A new `KafkaStreamProvider` configured from environment variables.
-    pub fn from_env() -> Self {
-        Self {
-            config: ConsumerConfig::from_env("localhost:9092", "actions-indexer", "curation.votes"),
-        }
-    }
-
     /// Creates and subscribes a Kafka consumer to the configured topic.
     fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
-        let consumer = self.config.create_consumer()
+        let consumer = self
+            .config
+            .create_consumer()
             .map_err(|e| ConsumerError::KafkaConnection(e.to_string()))?;
-        
-        consumer.subscribe(&[&self.config.topic])
+
+        consumer
+            .subscribe(&[&self.config.topic])
             .map_err(|e| ConsumerError::KafkaSubscription(e.to_string()))?;
-        
+
         Ok(consumer)
     }
 }
@@ -88,10 +75,19 @@ impl ConsumeActionsStream for KafkaStreamProvider {
         _cursor: Option<String>,
     ) -> Result<(), ConsumerError> {
         let consumer = self.create_subscribed_consumer()?;
-        
-        println!("KafkaStreamProvider: Connected to Kafka broker at {}", self.config.broker);
-        println!("KafkaStreamProvider: Subscribed to topic '{}'", self.config.topic);
-        println!("KafkaStreamProvider: Consumer group '{}'", self.config.group_id);
+
+        println!(
+            "KafkaStreamProvider: Connected to Kafka broker at {}",
+            self.config.broker
+        );
+        println!(
+            "KafkaStreamProvider: Subscribed to topic '{}'",
+            self.config.topic
+        );
+        println!(
+            "KafkaStreamProvider: Consumer group '{}'",
+            self.config.group_id
+        );
 
         // TODO (Task 5): Implement the actual consumption loop
         // For now, this is a skeleton that just sends StreamEnd
@@ -101,11 +97,12 @@ impl ConsumeActionsStream for KafkaStreamProvider {
         // 3. Convert to ActionRaw (Task 4)
         // 4. Send BlockData messages through the channel
         // 5. Commit offsets after successful processing (Task 6)
-        
+
         // Keep consumer alive to prevent immediate drop
         drop(consumer);
-        
-        sender.send(StreamMessage::StreamEnd)
+
+        sender
+            .send(StreamMessage::StreamEnd)
             .await
             .map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
 
@@ -116,25 +113,50 @@ impl ConsumeActionsStream for KafkaStreamProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use url::Url;
 
     #[test]
     fn test_kafka_stream_provider_new() {
-        let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic");
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "test-group",
+            "test-topic",
+        );
         let provider = KafkaStreamProvider::new(config);
-        
-        assert_eq!(provider.config.broker, "localhost:9092");
+
+        assert_eq!(
+            provider.config.broker,
+            Url::parse("localhost:9092").unwrap()
+        );
         assert_eq!(provider.config.group_id, "test-group");
         assert_eq!(provider.config.topic, "test-topic");
     }
 
     #[test]
-    fn test_kafka_stream_provider_from_env() {
-        let provider = KafkaStreamProvider::from_env();
-        
-        // Uses defaults when env vars not set
-        assert_eq!(provider.config.broker, "localhost:9092");
-        assert_eq!(provider.config.group_id, "actions-indexer");
-        assert_eq!(provider.config.topic, "curation.votes");
+    fn test_kafka_stream_provider_with_credentials() {
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "actions-indexer",
+            "curation.votes",
+        )
+        .with_credentials("user".to_string(), "pass".to_string());
+        let provider = KafkaStreamProvider::new(config);
+        assert_eq!(provider.config.username, Some("user".to_string()));
+        assert_eq!(provider.config.password, Some("pass".to_string()));
+    }
+
+    #[test]
+    fn test_kafka_stream_provider_with_ssl_ca() {
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "actions-indexer",
+            "curation.votes",
+        )
+        .with_ssl_ca("-----BEGIN CERTIFICATE-----".to_string());
+        let provider = KafkaStreamProvider::new(config);
+        assert_eq!(
+            provider.config.ssl_ca_pem,
+            Some("-----BEGIN CERTIFICATE-----".to_string())
+        );
     }
 }
-

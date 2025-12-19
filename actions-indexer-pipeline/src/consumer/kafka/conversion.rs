@@ -69,7 +69,7 @@ pub fn hermes_vote_to_action_raw(vote: &HermesVoteCast) -> Result<ActionRaw, Con
             return Err(ConsumerError::InvalidVoteDirection(format!(
                 "unknown direction: {}",
                 vote.direction
-            )))
+            )));
         }
     };
 
@@ -98,7 +98,7 @@ pub fn hermes_vote_to_action_raw(vote: &HermesVoteCast) -> Result<ActionRaw, Con
 /// Parses the ABI-encoded data field from HermesVoteCast.
 ///
 /// The data field is encoded as: abi.encode(uint16(version), bytes16(groupId), bytes16(spacePOV))
-/// 
+///
 /// ABI encoding layout (96 bytes total):
 /// - bytes 0-31: uint16 version (right-aligned, value in bytes 30-31)
 /// - bytes 32-63: bytes16 groupId (left-aligned, value in bytes 32-47)  
@@ -152,9 +152,9 @@ fn bytes_to_uuid(bytes: &[u8], field_name: &str) -> Result<Uuid, ConsumerError> 
         )));
     }
 
-    let bytes_array: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| ConsumerError::InvalidUuid(format!("{}: failed to convert to array", field_name)))?;
+    let bytes_array: [u8; 16] = bytes.try_into().map_err(|_| {
+        ConsumerError::InvalidUuid(format!("{}: failed to convert to array", field_name))
+    })?;
 
     Ok(Uuid::from_bytes(bytes_array))
 }
@@ -176,11 +176,10 @@ fn parse_object_type(bytes: &[u8]) -> Result<ObjectType, ConsumerError> {
     }
 
     // Interpret as little-endian u32
-    let type_id = u32::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| ConsumerError::InvalidObjectType("failed to convert bytes".to_string()))?,
-    );
+    let type_id =
+        u32::from_le_bytes(bytes.try_into().map_err(|_| {
+            ConsumerError::InvalidObjectType("failed to convert bytes".to_string())
+        })?);
 
     match type_id {
         0 => Ok(ObjectType::Entity),
@@ -204,17 +203,17 @@ mod tests {
     /// - bytes 64-95: bytes16 spacePOV (left-aligned, value in bytes 64-79)
     fn create_abi_encoded_data(version: u16, group_id: &Uuid, space_pov: &Uuid) -> Vec<u8> {
         let mut data = vec![0u8; 96];
-        
+
         // uint16 version at bytes 30-31 (big-endian)
         let version_bytes = version.to_be_bytes();
         data[30..32].copy_from_slice(&version_bytes);
-        
+
         // bytes16 groupId at bytes 32-47
         data[32..48].copy_from_slice(group_id.as_bytes());
-        
+
         // bytes16 spacePOV at bytes 64-79
         data[64..80].copy_from_slice(space_pov.as_bytes());
-        
+
         data
     }
 
