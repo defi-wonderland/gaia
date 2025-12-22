@@ -5,7 +5,7 @@ use alloy::primitives::{Bytes, TxHash};
 use hermes_schema::pb::voting::{HermesVoteCast, VoteDirection};
 use uuid::Uuid;
 
-use crate::errors::ConsumerError;
+use crate::errors::{ConsumerError, ConversionError};
 
 /// ABI-encoded data field size: 96 bytes
 /// Format: abi.encode(uint16(version), bytes16(groupId), bytes16(spacePOV))
@@ -55,7 +55,7 @@ pub fn hermes_vote_to_action_raw(vote: &HermesVoteCast) -> Result<ActionRaw, Con
     let meta = vote
         .meta
         .as_ref()
-        .ok_or_else(|| ConsumerError::MissingField("meta".to_string()))?;
+        .ok_or_else(|| ConversionError::MissingField("meta".to_string()))?;
 
     // Parse the ABI-encoded data field to extract version, groupId, and spacePOV
     let (action_version, group_id, space_pov) = parse_vote_data(&vote.data)?;
@@ -66,10 +66,11 @@ pub fn hermes_vote_to_action_raw(vote: &HermesVoteCast) -> Result<ActionRaw, Con
         Ok(VoteDirection::Down) => 1u8,
         Ok(VoteDirection::None) => 2u8, // Remove/unvote
         Err(_) => {
-            return Err(ConsumerError::InvalidVoteDirection(format!(
+            return Err(ConversionError::InvalidVoteDirection(format!(
                 "unknown direction: {}",
                 vote.direction
-            )));
+            ))
+            .into());
         }
     };
 
@@ -112,17 +113,18 @@ pub fn hermes_vote_to_action_raw(vote: &HermesVoteCast) -> Result<ActionRaw, Con
 /// * `Err(ConsumerError)` - Invalid data format
 fn parse_vote_data(data: &[u8]) -> Result<(u64, Uuid, Uuid), ConsumerError> {
     if data.len() != ABI_ENCODED_DATA_SIZE {
-        return Err(ConsumerError::InvalidDataField(format!(
+        return Err(ConversionError::InvalidDataField(format!(
             "expected {} bytes for ABI-encoded data, got {}",
             ABI_ENCODED_DATA_SIZE,
             data.len()
-        )));
+        ))
+        .into());
     }
 
     // Extract version from bytes 30-31 (uint16, big-endian in ABI encoding)
     let version_bytes: [u8; 2] = data[30..32]
         .try_into()
-        .map_err(|_| ConsumerError::InvalidDataField("failed to read version bytes".to_string()))?;
+        .map_err(|_| ConversionError::InvalidDataField("failed to read version bytes".to_string()))?;
     let action_version = u16::from_be_bytes(version_bytes) as u64;
 
     // Extract groupId from bytes 32-47 (bytes16, left-aligned)
@@ -145,15 +147,16 @@ fn parse_vote_data(data: &[u8]) -> Result<(u64, Uuid, Uuid), ConsumerError> {
 /// * `Err(ConsumerError)` - Invalid byte length
 fn bytes_to_uuid(bytes: &[u8], field_name: &str) -> Result<Uuid, ConsumerError> {
     if bytes.len() != 16 {
-        return Err(ConsumerError::InvalidUuid(format!(
+        return Err(ConversionError::InvalidUuid(format!(
             "{}: expected 16 bytes, got {}",
             field_name,
             bytes.len()
-        )));
+        ))
+        .into());
     }
 
     let bytes_array: [u8; 16] = bytes.try_into().map_err(|_| {
-        ConsumerError::InvalidUuid(format!("{}: failed to convert to array", field_name))
+        ConversionError::InvalidUuid(format!("{}: failed to convert to array", field_name))
     })?;
 
     Ok(Uuid::from_bytes(bytes_array))
@@ -169,25 +172,27 @@ fn bytes_to_uuid(bytes: &[u8], field_name: &str) -> Result<Uuid, ConsumerError> 
 /// * `Err(ConsumerError)` - Invalid object type
 fn parse_object_type(bytes: &[u8]) -> Result<ObjectType, ConsumerError> {
     if bytes.len() != 4 {
-        return Err(ConsumerError::InvalidObjectType(format!(
+        return Err(ConversionError::InvalidObjectType(format!(
             "expected 4 bytes, got {}",
             bytes.len()
-        )));
+        ))
+        .into());
     }
 
     // Interpret as little-endian u32
     let type_id =
         u32::from_le_bytes(bytes.try_into().map_err(|_| {
-            ConsumerError::InvalidObjectType("failed to convert bytes".to_string())
+            ConversionError::InvalidObjectType("failed to convert bytes".to_string())
         })?);
 
     match type_id {
         0 => Ok(ObjectType::Entity),
         1 => Ok(ObjectType::Relation),
-        _ => Err(ConsumerError::InvalidObjectType(format!(
+        _ => Err(ConversionError::InvalidObjectType(format!(
             "unknown type: {}",
             type_id
-        ))),
+        ))
+        .into()),
     }
 }
 
@@ -364,7 +369,10 @@ mod tests {
 
         let result = hermes_vote_to_action_raw(&vote);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ConsumerError::InvalidUuid(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConsumerError::Conversion(ConversionError::InvalidUuid(_))
+        ));
     }
 
     #[test]
@@ -390,7 +398,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConsumerError::InvalidObjectType(_)
+            ConsumerError::Conversion(ConversionError::InvalidObjectType(_))
         ));
     }
 
@@ -412,7 +420,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConsumerError::MissingField(_)
+            ConsumerError::Conversion(ConversionError::MissingField(_))
         ));
     }
 
@@ -436,7 +444,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            ConsumerError::InvalidDataField(_)
+            ConsumerError::Conversion(ConversionError::InvalidDataField(_))
         ));
     }
 

@@ -9,7 +9,7 @@ use hermes_kafka::{Consumer, StreamConsumer};
 use tokio::sync::mpsc;
 
 use crate::consumer::{ConsumeActionsStream, StreamMessage};
-use crate::errors::ConsumerError;
+use crate::errors::{ConsumerError, KafkaError, StreamError};
 
 use super::ConsumerConfig;
 
@@ -41,11 +41,11 @@ impl KafkaStreamProvider {
         let consumer = self
             .config
             .create_consumer()
-            .map_err(|e| ConsumerError::KafkaConnection(e.to_string()))?;
+            .map_err(|e| KafkaError::Connection(e.to_string()))?;
 
         consumer
             .subscribe(&[&self.config.topic])
-            .map_err(|e| ConsumerError::KafkaSubscription(e.to_string()))?;
+            .map_err(|e| KafkaError::Subscription(e.to_string()))?;
 
         Ok(consumer)
     }
@@ -104,7 +104,7 @@ impl ConsumeActionsStream for KafkaStreamProvider {
         sender
             .send(StreamMessage::StreamEnd)
             .await
-            .map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+            .map_err(|e| StreamError::ChannelSend(e.to_string()))?;
 
         Ok(())
     }
