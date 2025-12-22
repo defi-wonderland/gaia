@@ -13,10 +13,12 @@
 use async_trait::async_trait;
 use futures03::StreamExt;
 use hermes_kafka::{Consumer, Message, StreamConsumer};
+use crate::errors::{ConversionError, StreamError};
 use hermes_schema::pb::voting::HermesVoteCast;
 use prost::Message as ProstMessage;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use crate::errors::KafkaError;
 
 use crate::consumer::{BlockDataMessage, ConsumeActionsStream, StreamMessage};
 use crate::errors::ConsumerError;
@@ -47,12 +49,6 @@ enum ErrorCategory {
 /// This provider connects to a Kafka topic (e.g., `curation.votes`) and consumes
 /// `HermesVoteCast` protobuf messages, converting them to `ActionRaw` for processing
 /// by the existing pipeline.
-///
-/// ## Error Handling
-///
-/// - **Transient errors**: Retried with exponential backoff up to `MAX_CONSECUTIVE_ERRORS`
-/// - **Permanent errors**: Logged and skipped to prevent blocking the consumer
-/// - **Channel errors**: Fatal, immediately terminate the stream
 pub struct KafkaStreamProvider {
     config: ConsumerConfig,
 }
@@ -71,30 +67,17 @@ impl KafkaStreamProvider {
         Self { config }
     }
 
-    /// Creates a new `KafkaStreamProvider` from environment variables.
-    ///
-    /// Uses the following defaults:
-    /// - Broker: `localhost:9092`
-    /// - Group ID: `actions-indexer`
-    /// - Topic: `curation.votes`
-    ///
-    /// # Returns
-    ///
-    /// A new `KafkaStreamProvider` configured from environment variables.
-    pub fn from_env() -> Self {
-        Self {
-            config: ConsumerConfig::from_env("localhost:9092", "actions-indexer", "curation.votes"),
-        }
-    }
-
     /// Creates and subscribes a Kafka consumer to the configured topic.
     fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
-        let consumer = self.config.create_consumer()
-            .map_err(|e| ConsumerError::KafkaConnection(e.to_string()))?;
-        
-        consumer.subscribe(&[&self.config.topic])
-            .map_err(|e| ConsumerError::KafkaSubscription(e.to_string()))?;
-        
+        let consumer = self
+            .config
+            .create_consumer()
+            .map_err(|e| KafkaError::Connection(e.to_string()))?;
+
+        consumer
+            .subscribe(&[&self.config.topic])
+            .map_err(|e| KafkaError::Subscription(e.to_string()))?;
+
         Ok(consumer)
     }
 
@@ -116,33 +99,10 @@ impl KafkaStreamProvider {
     /// new errors are properly categorized at compile time.
     fn categorize_consumer_error(error: &ConsumerError) -> ErrorCategory {
         match error {
-            // Permanent errors - malformed data, skip the message
-            ConsumerError::DecodingActions(_) |
-            ConsumerError::InvalidUuid(_) |
-            ConsumerError::InvalidAddress(_) |
-            ConsumerError::InvalidTxHash(_) |
-            ConsumerError::InvalidActionType(_) |
-            ConsumerError::InvalidObjectType(_) |
-            ConsumerError::InvalidVoteDirection(_) |
-            ConsumerError::InvalidDataField(_) |
-            ConsumerError::MissingField(_) => ErrorCategory::Permanent,
-            
-            // Transient errors - can retry
-            ConsumerError::KafkaConnection(_) |
-            ConsumerError::KafkaSubscription(_) |
-            ConsumerError::KafkaConsume(_) |
-            ConsumerError::KafkaCommit(_) |
-            ConsumerError::StreamError(_) |
-            ConsumerError::StreamingError(_) |
-            ConsumerError::ReadingPackage(_) |
-            ConsumerError::ReadingBlockRange(_) |
-            ConsumerError::ReadingEndpoint(_) |
-            ConsumerError::LoadingCursor(_) |
-            ConsumerError::ProcessingBlockUndoSignal(_) |
-            ConsumerError::ProcessingBlockScopedData(_) => ErrorCategory::Transient,
-            
-            // Channel errors are fatal - cannot recover
-            ConsumerError::ChannelSend(_) => ErrorCategory::Permanent,
+            ConsumerError::Config(_) => ErrorCategory::Permanent,
+            ConsumerError::Stream(_) => ErrorCategory::Permanent,
+            ConsumerError::Conversion(_) => ErrorCategory::Permanent,
+            ConsumerError::Kafka(_) => ErrorCategory::Transient,
         }
     }
 
@@ -236,11 +196,11 @@ impl ConsumeActionsStream for KafkaStreamProvider {
                             messages_skipped += 1;
                             // Send error notification but don't fail
                             let _ = sender.send(StreamMessage::Error(
-                                ConsumerError::DecodingActions(format!(
+                                ConsumerError::Conversion(ConversionError::InvalidDataField(format!(
                                     "protobuf decode error at offset {}: {}",
                                     borrowed_message.offset(),
                                     e
-                                ))
+                                )))
                             )).await;
                             // Commit to prevent redelivery
                             let _ = consumer.commit_message(&borrowed_message, rdkafka::consumer::CommitMode::Async);
@@ -302,7 +262,7 @@ impl ConsumeActionsStream for KafkaStreamProvider {
                         block_number,
                     }))
                     .await
-                    .map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+                    .map_err(|e| ConsumerError::Stream(StreamError::ChannelSend(e.to_string())))?;
 
                     // Commit the offset after successful send (at-least-once delivery)
                     if let Err(e) = consumer.commit_message(&borrowed_message, rdkafka::consumer::CommitMode::Async) {
@@ -341,7 +301,7 @@ impl ConsumeActionsStream for KafkaStreamProvider {
                     
                     // Send error notification
                     let _ = sender.send(StreamMessage::Error(
-                        ConsumerError::KafkaConsume(e.to_string())
+                        ConsumerError::Kafka(KafkaError::Consume(e.to_string()))
                     )).await;
                     
                     if error_category == ErrorCategory::Transient {
@@ -350,10 +310,10 @@ impl ConsumeActionsStream for KafkaStreamProvider {
                                 "KafkaStreamProvider: Max consecutive errors ({}) reached, terminating",
                                 MAX_CONSECUTIVE_ERRORS
                             );
-                            return Err(ConsumerError::KafkaConsume(format!(
+                            return Err(ConsumerError::Kafka(KafkaError::Consume(format!(
                                 "Max consecutive errors reached: {}",
                                 e
-                            )));
+                            ))))?;
                         }
                         
                         // Apply exponential backoff before next poll
@@ -380,7 +340,7 @@ impl ConsumeActionsStream for KafkaStreamProvider {
         
         sender.send(StreamMessage::StreamEnd)
             .await
-            .map_err(|e| ConsumerError::ChannelSend(e.to_string()))?;
+            .map_err(|e| ConsumerError::Stream(StreamError::ChannelSend(e.to_string())))?;
 
         Ok(())
     }
@@ -389,25 +349,50 @@ impl ConsumeActionsStream for KafkaStreamProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use url::Url;
 
     #[test]
     fn test_kafka_stream_provider_new() {
-        let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic");
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "test-group",
+            "test-topic",
+        );
         let provider = KafkaStreamProvider::new(config);
-        
-        assert_eq!(provider.config.broker, "localhost:9092");
+
+        assert_eq!(
+            provider.config.broker,
+            Url::parse("localhost:9092").unwrap()
+        );
         assert_eq!(provider.config.group_id, "test-group");
         assert_eq!(provider.config.topic, "test-topic");
     }
 
     #[test]
-    fn test_kafka_stream_provider_from_env() {
-        let provider = KafkaStreamProvider::from_env();
-        
-        // Uses defaults when env vars not set
-        assert_eq!(provider.config.broker, "localhost:9092");
-        assert_eq!(provider.config.group_id, "actions-indexer");
-        assert_eq!(provider.config.topic, "curation.votes");
+    fn test_kafka_stream_provider_with_credentials() {
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "actions-indexer",
+            "curation.votes",
+        )
+        .with_credentials("user".to_string(), "pass".to_string());
+        let provider = KafkaStreamProvider::new(config);
+        assert_eq!(provider.config.username, Some("user".to_string()));
+        assert_eq!(provider.config.password, Some("pass".to_string()));
+    }
+
+    #[test]
+    fn test_kafka_stream_provider_with_ssl_ca() {
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "actions-indexer",
+            "curation.votes",
+        )
+        .with_ssl_ca("-----BEGIN CERTIFICATE-----".to_string());
+        let provider = KafkaStreamProvider::new(config);
+        assert_eq!(
+            provider.config.ssl_ca_pem,
+            Some("-----BEGIN CERTIFICATE-----".to_string())
+        );
     }
 }
-

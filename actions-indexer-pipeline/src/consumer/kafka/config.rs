@@ -3,6 +3,7 @@
 //! Provides configuration structures and utilities for creating Kafka consumers.
 
 use std::env;
+use url::Url;
 
 use anyhow::Result;
 use hermes_kafka::{ClientConfig, StreamConsumer};
@@ -11,7 +12,7 @@ use hermes_kafka::{ClientConfig, StreamConsumer};
 #[derive(Debug, Clone)]
 pub struct ConsumerConfig {
     /// Kafka broker address (e.g., "localhost:9092")
-    pub broker: String,
+    pub broker: Url,
     /// Consumer group ID for offset tracking
     pub group_id: String,
     /// Topic to consume from
@@ -27,7 +28,7 @@ pub struct ConsumerConfig {
 impl ConsumerConfig {
     /// Create a new ConsumerConfig with the given broker, group_id, and topic.
     pub fn new(
-        broker: impl Into<String>,
+        broker: impl Into<Url>,
         group_id: impl Into<String>,
         topic: impl Into<String>,
     ) -> Self {
@@ -38,31 +39,6 @@ impl ConsumerConfig {
             username: None,
             password: None,
             ssl_ca_pem: None,
-        }
-    }
-
-    /// Create a ConsumerConfig from environment variables.
-    ///
-    /// # Environment Variables
-    ///
-    /// - `KAFKA_BROKER` - Broker address (uses provided default if not set)
-    /// - `KAFKA_CONSUMER_GROUP` - Consumer group ID (uses provided default if not set)
-    /// - `KAFKA_TOPIC` - Topic to consume from (uses provided default if not set)
-    /// - `KAFKA_USERNAME` - SASL username (optional)
-    /// - `KAFKA_PASSWORD` - SASL password (optional)
-    /// - `KAFKA_SSL_CA_PEM` - Custom CA cert in PEM format (optional)
-    pub fn from_env(
-        default_broker: &str,
-        default_group_id: &str,
-        default_topic: &str,
-    ) -> Self {
-        Self {
-            broker: env::var("KAFKA_BROKER").unwrap_or_else(|_| default_broker.to_string()),
-            group_id: env::var("KAFKA_CONSUMER_GROUP").unwrap_or_else(|_| default_group_id.to_string()),
-            topic: env::var("KAFKA_TOPIC").unwrap_or_else(|_| default_topic.to_string()),
-            username: env::var("KAFKA_USERNAME").ok(),
-            password: env::var("KAFKA_PASSWORD").ok(),
-            ssl_ca_pem: env::var("KAFKA_SSL_CA_PEM").ok(),
         }
     }
 
@@ -93,7 +69,7 @@ impl ConsumerConfig {
         let mut client_config = ClientConfig::new();
 
         client_config
-            .set("bootstrap.servers", &self.broker)
+            .set("bootstrap.servers", self.broker.as_str())
             .set("group.id", &self.group_id)
             .set("enable.auto.commit", "false") // Manual commit for at-least-once delivery
             .set("auto.offset.reset", "earliest") // Start from beginning if no committed offset
@@ -125,9 +101,13 @@ mod tests {
 
     #[test]
     fn test_consumer_config_new() {
-        let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic");
-        
-        assert_eq!(config.broker, "localhost:9092");
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "test-group",
+            "test-topic",
+        );
+
+        assert_eq!(config.broker, Url::parse("localhost:9092").unwrap());
         assert_eq!(config.group_id, "test-group");
         assert_eq!(config.topic, "test-topic");
         assert!(config.username.is_none());
@@ -137,19 +117,29 @@ mod tests {
 
     #[test]
     fn test_consumer_config_with_credentials() {
-        let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic")
-            .with_credentials("user".to_string(), "pass".to_string());
-        
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "test-group",
+            "test-topic",
+        )
+        .with_credentials("user".to_string(), "pass".to_string());
+
         assert_eq!(config.username, Some("user".to_string()));
         assert_eq!(config.password, Some("pass".to_string()));
     }
 
     #[test]
     fn test_consumer_config_with_ssl_ca() {
-        let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic")
-            .with_ssl_ca("-----BEGIN CERTIFICATE-----".to_string());
-        
-        assert_eq!(config.ssl_ca_pem, Some("-----BEGIN CERTIFICATE-----".to_string()));
+        let config = ConsumerConfig::new(
+            Url::parse("localhost:9092").unwrap(),
+            "test-group",
+            "test-topic",
+        )
+        .with_ssl_ca("-----BEGIN CERTIFICATE-----".to_string());
+
+        assert_eq!(
+            config.ssl_ca_pem,
+            Some("-----BEGIN CERTIFICATE-----".to_string())
+        );
     }
 }
-

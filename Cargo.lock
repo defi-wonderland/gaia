@@ -46,6 +46,7 @@ dependencies = [
  "tokio-retry",
  "tokio-stream",
  "tonic 0.12.3",
+ "url",
  "uuid",
 ]
 
