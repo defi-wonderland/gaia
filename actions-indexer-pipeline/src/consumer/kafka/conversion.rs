@@ -183,7 +183,7 @@ fn parse_object_type(bytes: &[u8]) -> Result<ObjectType, ConsumerError> {
     let type_id = u32::from_be_bytes(
         bytes
             .try_into()
-            .map_err(|_| ConsumerError::InvalidObjectType("failed to convert bytes".to_string()))?,
+            .map_err(|_| ConversionError::InvalidObjectType("failed to convert bytes".to_string()))?,
     );
 
     match type_id {
