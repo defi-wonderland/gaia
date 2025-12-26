@@ -8,6 +8,8 @@ use actions_indexer_shared::types::{ActionType, ObjectType};
 use std::sync::Arc;
 use crate::config::handlers::VoteHandler;
 use crate::errors::IndexingError;
+use actions_indexer_pipeline::consumer::ConsumerConfig;
+use url::Url;
 
 // Use CARGO_MANIFEST_DIR to get path relative to the crate
 const PKG_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/geo-actions-v0.1.0.spkg");
@@ -95,7 +97,27 @@ impl Dependencies {
         // Create the appropriate stream provider based on data source
         let actions_consumer = match data_source {
             DataSource::Kafka => {
-                let kafka_provider = KafkaStreamProvider::from_env();
+                let kafka_broker = std::env::var("KAFKA_BROKER").expect("KAFKA_BROKER must be set");
+                let kafka_consumer_group = std::env::var("KAFKA_CONSUMER_GROUP").expect("KAFKA_CONSUMER_GROUP must be set");
+                let kafka_topic = std::env::var("KAFKA_TOPIC").expect("KAFKA_TOPIC must be set");
+                let kafka_username = std::env::var("KAFKA_USERNAME").ok();
+                let kafka_password = std::env::var("KAFKA_PASSWORD").ok();
+                let kafka_ssl_ca_pem = std::env::var("KAFKA_SSL_CA_PEM").ok();
+                let mut consumer_config = ConsumerConfig::new(
+                    Url::parse(&kafka_broker).expect("KAFKA_BROKER must be a valid URL"),
+                    kafka_consumer_group,
+                    kafka_topic,
+                );
+                if kafka_username.is_some() && kafka_password.is_some() {
+                    consumer_config = consumer_config.with_credentials(kafka_username.unwrap(), kafka_password.unwrap());
+                }
+                else if kafka_ssl_ca_pem.is_some() {
+                    consumer_config = consumer_config.with_ssl_ca(kafka_ssl_ca_pem.unwrap());
+                } else {
+                    return Err(IndexingError::InvalidConfiguration("KAFKA_USERNAME and KAFKA_PASSWORD or KAFKA_SSL_CA_PEM must be set when DATA_SOURCE=kafka".to_string()));
+                }
+
+                let kafka_provider = KafkaStreamProvider::new(consumer_config);
                 ActionsConsumer::new(Box::new(kafka_provider))
             }
             DataSource::Substreams => {
