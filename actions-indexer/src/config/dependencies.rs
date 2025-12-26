@@ -114,7 +114,7 @@ impl Dependencies {
                 else if kafka_ssl_ca_pem.is_some() {
                     consumer_config = consumer_config.with_ssl_ca(kafka_ssl_ca_pem.unwrap());
                 } else {
-                    return Err(IndexingError::InvalidConfiguration("KAFKA_USERNAME and KAFKA_PASSWORD or KAFKA_SSL_CA_PEM must be set when DATA_SOURCE=kafka".to_string()));
+                    println!("No credentials provided for Kafka, using plaintext authentication");
                 }
 
                 let kafka_provider = KafkaStreamProvider::new(consumer_config);
