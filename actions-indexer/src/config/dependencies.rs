@@ -166,8 +166,6 @@ mod tests {
     use super::*;
     use std::env;
     use serial_test::serial;
-    use tempfile::NamedTempFile;
-    use std::io::Write;
 
     // Helper function to set test environment variables for substreams
     fn set_substreams_env_vars() {
@@ -200,16 +198,10 @@ mod tests {
             env::remove_var("KAFKA_BROKER");
             env::remove_var("KAFKA_CONSUMER_GROUP");
             env::remove_var("KAFKA_TOPIC");
+            env::remove_var("KAFKA_USERNAME");
+            env::remove_var("KAFKA_PASSWORD");
+            env::remove_var("KAFKA_SSL_CA_PEM");
         }
-    }
-
-    // Helper function to create a test package file
-    fn create_test_package_file() -> NamedTempFile {
-        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        // Write minimal valid protobuf data for a package
-        // This is a simplified approach - in a real scenario you'd want proper protobuf data
-        temp_file.write_all(b"dummy package data").expect("Failed to write to temp file");
-        temp_file
     }
 
     #[test]
@@ -284,11 +276,9 @@ mod tests {
     #[serial]
     async fn test_dependencies_new_invalid_database_url_substreams() {
         clear_env_vars();
+        set_substreams_env_vars();
         unsafe {
-            env::set_var("DATA_SOURCE", "substreams");
             env::set_var("DATABASE_URL", "invalid-database-url");
-            env::set_var("SUBSTREAMS_ENDPOINT", "https://test-endpoint.com");
-            env::set_var("SUBSTREAMS_API_TOKEN", "test-token");
         }
 
         let result = Dependencies::new().await;
@@ -305,9 +295,11 @@ mod tests {
     #[serial]
     async fn test_dependencies_new_invalid_database_url_kafka() {
         clear_env_vars();
+        set_kafka_env_vars();
         unsafe {
-            env::set_var("DATA_SOURCE", "kafka");
             env::set_var("DATABASE_URL", "invalid-database-url");
+            env::set_var("KAFKA_USERNAME", "test-user");
+            env::set_var("KAFKA_PASSWORD", "test-password");
         }
 
         let result = Dependencies::new().await;
@@ -316,7 +308,7 @@ mod tests {
         if let Err(IndexingError::Database(_)) = result {
             // Expected error type - test passes
         } else {
-            panic!("Expected Database error");
+            panic!("Expected Database error, got: {:?}", result.err());
         }
     }
 
