@@ -25,6 +25,7 @@ use hermes_schema::pb::voting::{HermesVoteCast, VoteDirection};
 use prost::Message;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use url::Url;
 
 /// Helper to create a valid HermesVoteCast message for testing.
 fn create_test_vote(
@@ -254,9 +255,9 @@ fn test_conversion_error_missing_metadata() {
 
 #[test]
 fn test_consumer_config_creation() {
-    let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic");
+    let config = ConsumerConfig::new(Url::parse("localhost:9092").unwrap(), "test-group", "test-topic");
     
-    assert_eq!(config.broker, "localhost:9092");
+    assert_eq!(config.broker, Url::parse("localhost:9092").unwrap());
     assert_eq!(config.group_id, "test-group");
     assert_eq!(config.topic, "test-topic");
     assert!(config.username.is_none());
@@ -265,7 +266,7 @@ fn test_consumer_config_creation() {
 
 #[test]
 fn test_consumer_config_with_credentials() {
-    let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic")
+    let config = ConsumerConfig::new(Url::parse("localhost:9092").unwrap(), "test-group", "test-topic")
         .with_credentials("user".to_string(), "pass".to_string());
     
     assert_eq!(config.username, Some("user".to_string()));
@@ -274,7 +275,7 @@ fn test_consumer_config_with_credentials() {
 
 #[test]
 fn test_kafka_stream_provider_creation() {
-    let config = ConsumerConfig::new("localhost:9092", "test-group", "test-topic");
+    let config = ConsumerConfig::new(Url::parse("localhost:9092").unwrap(), "test-group", "test-topic");
     let provider = KafkaStreamProvider::new(config);
     
     // Provider should be created without errors
@@ -297,7 +298,7 @@ fn test_kafka_stream_provider_creation() {
 #[tokio::test]
 #[ignore = "Requires running Kafka broker"]
 async fn test_kafka_connection() {
-    let config = ConsumerConfig::new("localhost:9092", "integration-test-group", "test-votes");
+    let config = ConsumerConfig::new(Url::parse("localhost:9092").unwrap(), "integration-test-group", "test-votes");
     let provider = KafkaStreamProvider::new(config);
     
     let (tx, _rx) = mpsc::channel::<StreamMessage>(100);
@@ -328,7 +329,7 @@ async fn test_kafka_connection() {
 #[tokio::test]
 #[ignore = "Requires running Kafka broker with test data"]
 async fn test_kafka_message_consumption() {
-    let config = ConsumerConfig::new("localhost:9092", "integration-test-consumer", "test-votes");
+    let config = ConsumerConfig::new(Url::parse("localhost:9092").unwrap(), "integration-test-consumer", "test-votes");
     let provider = KafkaStreamProvider::new(config);
     
     let (tx, mut rx) = mpsc::channel::<StreamMessage>(100);
