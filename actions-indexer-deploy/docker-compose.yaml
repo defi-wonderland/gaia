@@ -28,7 +28,3 @@ services:
 networks:
   hermes_default:
     external: true
-
-volumes:
-  actions-postgres-data:
-
