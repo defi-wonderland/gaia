@@ -5,9 +5,8 @@ on:
   pull_request:
     types: [opened, synchronize]
     branches:
-      - dev
-      - main
       - upstream-dev
+      - upstream-main
     paths:
       - "actions-indexer/**"
       - "actions-indexer-pipeline/**"
@@ -17,12 +16,15 @@ on:
       - ".github/workflows/actions-integration-tests.yml"
   push:
     branches:
-      - dev
-      - main
       - upstream-dev
+      - upstream-main
     paths:
+      - "actions-indexer/**"
+      - "actions-indexer-pipeline/**"
+      - "actions-indexer-shared/**"
       - "actions-indexer-repository/**"
       - "api/drizzle/**"
+      - ".github/workflows/actions-integration-tests.yml"
 
 permissions:
   contents: read
