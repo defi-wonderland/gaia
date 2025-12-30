@@ -5,6 +5,8 @@ on:
   pull_request:
       types: [opened, synchronize]
       branches:
+        - main
+        - dev
         - upstream-main
         - upstream-dev
       paths:
@@ -16,6 +18,8 @@ on:
         - '.github/workflows/actions-unit-tests.yml'
   push:
       branches:
+        - main
+        - dev
         - upstream-main
         - upstream-dev
       paths:
