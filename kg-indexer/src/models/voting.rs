@@ -8,11 +8,49 @@ pub enum VoteValue {
     Remove,
 }
 
+impl From<VoteValue> for i16 {
+    fn from(v: VoteValue) -> i16 {
+        match v {
+            VoteValue::Up => 0,
+            VoteValue::Down => 1,
+            VoteValue::Remove => 2,
+        }
+    }
+}
+
+impl From<i16> for VoteValue {
+    fn from(v: i16) -> VoteValue {
+        match v {
+            0 => VoteValue::Up,
+            1 => VoteValue::Down,
+            _ => VoteValue::Remove,
+        }
+    }
+}
+
 /// Type of object being voted on
 #[derive(Clone, Debug, PartialEq, Eq, Copy, Hash)]
 pub enum VoteObjectType {
     Entity,
     Relation,
+}
+
+impl From<VoteObjectType> for i16 {
+    fn from(t: VoteObjectType) -> i16 {
+        match t {
+            VoteObjectType::Entity => 0,
+            VoteObjectType::Relation => 1,
+        }
+    }
+}
+
+impl From<i16> for VoteObjectType {
+    fn from(v: i16) -> VoteObjectType {
+        match v {
+            1 => VoteObjectType::Relation,
+            _ => VoteObjectType::Entity,
+        }
+    }
 }
 
 /// Processed vote from HermesVoteCast
