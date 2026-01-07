@@ -17,7 +17,7 @@ use crate::models::{
     spaces::{SpaceItem, SpaceType},
     subspaces::SubspaceItem,
     values::ValueOp,
-    voting::{UserVoteCriteria, UserVoteItem, VoteCountCriteria, VoteObjectType, VotesCountItem},
+    voting::{UserVoteCriteria, UserVoteItem, VoteCountCriteria, VotesCountItem},
 };
 
 pub struct Storage {
