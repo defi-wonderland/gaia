@@ -6,3 +6,4 @@ pub mod relations;
 pub mod spaces;
 pub mod subspaces;
 pub mod values;
+pub mod voting;
