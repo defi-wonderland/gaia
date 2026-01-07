@@ -52,6 +52,7 @@ impl KafkaConsumer {
             "space.membership".to_string(),
             "space.trust.extensions".to_string(),
             "space.governance".to_string(),
+            "curation.votes".to_string(),
         ];
 
         info!(
@@ -109,6 +110,7 @@ pub enum KgMessage {
     ProposalCreated(hermes_schema::pb::governance::HermesProposalCreated),
     ProposalVoted(hermes_schema::pb::governance::HermesProposalVoted),
     ProposalExecuted(hermes_schema::pb::governance::HermesProposalExecuted),
+    VoteCast(hermes_schema::pb::voting::HermesVoteCast),
 }
 
 impl KgMessage {
@@ -123,6 +125,7 @@ impl KgMessage {
             KgMessage::ProposalCreated(p) => p.meta.as_ref(),
             KgMessage::ProposalVoted(v) => v.meta.as_ref(),
             KgMessage::ProposalExecuted(e) => e.meta.as_ref(),
+            KgMessage::VoteCast(v) => v.meta.as_ref(),
         }
     }
 
@@ -226,6 +229,11 @@ pub fn parse_message(
                     event_type
                 ))),
             }
+        }
+        "curation.votes" => {
+            let vote = hermes_schema::pb::voting::HermesVoteCast::decode(payload)
+                .map_err(|e| IndexerError::decode(format!("HermesVoteCast: {}", e)))?;
+            Ok(KgMessage::VoteCast(vote))
         }
         _ => Err(IndexerError::decode(format!("unknown topic: {}", topic))),
     }

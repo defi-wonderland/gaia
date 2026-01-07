@@ -443,6 +443,10 @@ async fn process_message(msg: KgMessage, storage: &Storage) -> Result<usize, Ind
                 .await?;
             1
         }
+        KgMessage::VoteCast(_vote) => {
+            // TODO
+            0
+        }
     };
 
     tx.commit().await?;
@@ -603,6 +607,10 @@ async fn process_block(
                     .update_proposal_executed(execution.proposal_id, execution.executed_at, &mut tx)
                     .await?;
                 1
+            }
+            KgMessage::VoteCast(_vote) => {
+                // TODO
+                0
             }
         };
 
