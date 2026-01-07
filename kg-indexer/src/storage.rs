@@ -17,7 +17,7 @@ use crate::models::{
     spaces::{SpaceItem, SpaceType},
     subspaces::SubspaceItem,
     values::ValueOp,
-    voting::{UserVoteCriteria, UserVoteItem, VoteCountCriteria, VotesCountItem},
+    voting::{UserVoteCriteria, UserVoteItem, VoteCountCriteria, VoteItem, VotesCountItem},
 };
 
 pub struct Storage {
@@ -918,6 +918,59 @@ impl Storage {
         .bind(proposal_id)
         .execute(&mut **tx)
         .await?;
+
+        Ok(())
+    }
+
+    /// Insert raw vote records.
+    ///
+    /// Stores every vote event.
+    /// Each vote creates a new row.
+    pub async fn insert_votes(
+        &self,
+        votes: &[VoteItem],
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+    ) -> Result<(), IndexerError> {
+        if votes.is_empty() {
+            return Ok(());
+        }
+
+        let mut voter_ids = Vec::with_capacity(votes.len());
+        let mut object_ids = Vec::with_capacity(votes.len());
+        let mut object_types = Vec::with_capacity(votes.len());
+        let mut space_ids = Vec::with_capacity(votes.len());
+        let mut vote_values = Vec::with_capacity(votes.len());
+        let mut block_numbers = Vec::with_capacity(votes.len());
+        let mut block_timestamps = Vec::with_capacity(votes.len());
+
+        for vote in votes {
+            voter_ids.push(vote.voter_id);
+            object_ids.push(vote.object_id);
+            object_types.push(i16::from(vote.object_type));
+            space_ids.push(vote.space_id);
+            vote_values.push(i16::from(vote.vote));
+            block_numbers.push(vote.block_number as i64);
+            block_timestamps.push(vote.block_timestamp as i64);
+        }
+
+        let query = r#"
+            INSERT INTO votes (voter_id, object_id, object_type, space_id, vote, block_number, block_timestamp)
+            SELECT voter_id, object_id, object_type, space_id, vote, block_number, to_timestamp(block_timestamp)
+            FROM UNNEST(
+                $1::uuid[], $2::uuid[], $3::smallint[], $4::uuid[], $5::smallint[], $6::bigint[], $7::bigint[]
+            ) AS t(voter_id, object_id, object_type, space_id, vote, block_number, block_timestamp)
+        "#;
+
+        sqlx::query(query)
+            .bind(&voter_ids)
+            .bind(&object_ids)
+            .bind(&object_types)
+            .bind(&space_ids)
+            .bind(&vote_values)
+            .bind(&block_numbers)
+            .bind(&block_timestamps)
+            .execute(&mut **tx)
+            .await?;
 
         Ok(())
     }
