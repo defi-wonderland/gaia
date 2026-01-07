@@ -14,6 +14,12 @@ pub enum HandlerError {
 
     #[error("Unknown membership role: {0}")]
     UnknownRole(i32),
+
+    #[error("Invalid vote direction: {0}")]
+    InvalidVoteDirection(i32),
+
+    #[error("Invalid object type: {0:?}")]
+    InvalidObjectType(Vec<u8>),
 }
 
 /// Top-level errors for the indexer
