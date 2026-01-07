@@ -443,15 +443,80 @@ async fn process_message(msg: KgMessage, storage: &Storage) -> Result<usize, Ind
                 .await?;
             1
         }
-        KgMessage::VoteCast(_vote) => {
-            // TODO
-            0
+        KgMessage::VoteCast(ref vote) => {
+            process_votes_batch(&[vote], storage, &mut tx).await?
         }
     };
 
     tx.commit().await?;
 
     Ok(ops)
+}
+
+/// Process a batch of VoteCast messages efficiently.
+/// This handles deduplication, fetching existing data, calculating deltas,
+/// and persisting all changes in bulk operations.
+async fn process_votes_batch(
+    votes: &[&hermes_schema::pb::voting::HermesVoteCast],
+    storage: &Storage,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<usize, IndexerError> {
+    // Convert all votes to VoteItems
+    let vote_items: Vec<_> = votes
+        .iter()
+        .map(|v| handlers::voting::handle_vote_cast(v))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Deduplicate, keeping the latest vote per user/object/space/type
+    let user_votes = handlers::voting::get_latest_user_votes(&vote_items);
+
+    if user_votes.is_empty() {
+        return Ok(0);
+    }
+
+    // Build criteria for batch fetching existing data
+    let user_vote_criteria: Vec<_> = user_votes
+        .iter()
+        .map(|v| (v.voter_id, v.object_id, v.space_id, v.object_type))
+        .collect();
+    let vote_count_criteria: Vec<_> = user_votes
+        .iter()
+        .map(|v| (v.object_id, v.space_id, v.object_type))
+        .collect();
+
+    // Batch fetch existing data user votes and vote counts
+    let (stored_user_votes, stored_vote_counts) = tokio::try_join!(
+        storage.get_user_votes(&user_vote_criteria),
+        storage.get_votes_counts(&vote_count_criteria)
+    )?;
+
+    // Convert to HashMaps for lookup
+    let stored_user_votes_map: std::collections::HashMap<_, _> = stored_user_votes
+        .into_iter()
+        .map(|v| ((v.voter_id, v.object_id, v.space_id, v.object_type), v))
+        .collect();
+    let stored_vote_counts_map: std::collections::HashMap<_, _> = stored_vote_counts
+        .into_iter()
+        .map(|c| ((c.object_id, c.space_id, c.object_type), c))
+        .collect();
+
+    // Calculate updated vote counts with deltas
+    let vote_counts = handlers::voting::calculate_vote_counts(
+        &user_votes,
+        &stored_user_votes_map,
+        &stored_vote_counts_map,
+    );
+
+    storage.upsert_user_votes(&user_votes, tx).await?;
+    storage.upsert_votes_counts(&vote_counts, tx).await?;
+
+    debug!(
+        votes_processed = user_votes.len(),
+        vote_counts_updated = vote_counts.len(),
+        "Processed VoteCast batch"
+    );
+
+    Ok(votes.len())
 }
 
 /// Process all events in a block within a single transaction.
@@ -475,6 +540,9 @@ async fn process_block(
         .execute(&mut *tx)
         .await?;
     let mut total_ops = 0;
+
+    // Buffer for VoteCast messages to process in batch
+    let mut vote_cast_buffer: Vec<&hermes_schema::pb::voting::HermesVoteCast> = Vec::new();
 
     // Process each message in sequence order
     for event in &events {
@@ -608,13 +676,19 @@ async fn process_block(
                     .await?;
                 1
             }
-            KgMessage::VoteCast(_vote) => {
-                // TODO
+            KgMessage::VoteCast(vote) => {
+                vote_cast_buffer.push(vote);
                 0
             }
         };
 
         total_ops += ops;
+    }
+
+    // Process buffered VoteCast messages in batch
+    if !vote_cast_buffer.is_empty() {
+        let vote_ops = process_votes_batch(&vote_cast_buffer, storage, &mut tx).await?;
+        total_ops += vote_ops;
     }
 
     // Commit the transaction
