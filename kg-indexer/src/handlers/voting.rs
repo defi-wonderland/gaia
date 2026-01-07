@@ -1,10 +1,15 @@
 //! Handler for HermesVoteCast messages from the curation.votes topic.
 
+use std::collections::HashMap;
+
 use hermes_schema::pb::voting::{HermesVoteCast, VoteDirection};
 use uuid::Uuid;
 
 use crate::error::HandlerError;
-use crate::models::voting::{VoteItem, VoteObjectType, VoteValue};
+use crate::models::voting::{
+    UserVoteCriteria, UserVoteItem, VoteCountCriteria, VoteItem, VoteObjectType, VoteValue,
+    VotesCountItem,
+};
 
 /// Object type discriminator values (big-endian 4-byte encoding)
 const OBJECT_TYPE_ENTITY: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
@@ -50,6 +55,105 @@ pub fn handle_vote_cast(vote: &HermesVoteCast) -> Result<VoteItem, HandlerError>
         block_number: meta.block_number,
         block_timestamp: meta.created_at,
     })
+}
+
+/// Represents the change in vote counts when a vote is modified.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VotesDelta {
+    pub upvotes: i32,
+    pub downvotes: i32,
+}
+
+/// Deduplicate votes, keeping the latest vote per user/entity/space/object_type combination.
+///
+/// Assumes votes are processed in order (by block_timestamp), so the last occurrence
+/// for each unique key is the most recent vote.
+pub fn get_latest_user_votes(votes: &[VoteItem]) -> Vec<UserVoteItem> {
+    let mut latest_votes: HashMap<UserVoteCriteria, &VoteItem> = HashMap::new();
+
+    for vote in votes {
+        let vote_criteria = (vote.voter_id, vote.object_id, vote.space_id, vote.object_type);
+        latest_votes.insert(vote_criteria, vote);
+    }
+
+    latest_votes
+        .into_iter()
+        .map(|((voter_id, object_id, space_id, object_type), vote)| UserVoteItem {
+            voter_id,
+            object_id,
+            object_type,
+            space_id,
+            vote_type: vote.vote.clone(),
+            voted_at: vote.block_timestamp,
+        })
+        .collect()
+}
+
+/// Compute the delta in upvotes/downvotes when a vote changes.
+///
+/// Returns the change that should be applied to the aggregate counts.
+pub fn compute_vote_delta(saved_vote: Option<&UserVoteItem>, new_vote: &UserVoteItem) -> VotesDelta {
+    let saved_vote_value = saved_vote.map(|vote| vote.vote_type.clone());
+    let new_vote_value = new_vote.vote_type.clone();
+
+    let (upvotes, downvotes) = match (saved_vote_value, new_vote_value) {
+        (Some(VoteValue::Up), VoteValue::Down) => (-1, 1),
+        (Some(VoteValue::Up), VoteValue::Remove) => (-1, 0),
+        (Some(VoteValue::Down), VoteValue::Up) => (1, -1),
+        (Some(VoteValue::Down), VoteValue::Remove) => (0, -1),
+        (Some(VoteValue::Remove), VoteValue::Up) => (1, 0),
+        (Some(VoteValue::Remove), VoteValue::Down) => (0, 1),
+        (None, VoteValue::Up) => (1, 0),
+        (None, VoteValue::Down) => (0, 1),
+        // No change for same vote type or Remove -> Remove
+        (_, _) => (0, 0),
+    };
+
+    VotesDelta { upvotes, downvotes }
+}
+
+/// Calculate updated vote counts based on new votes and existing stored data.
+///
+/// This function takes:
+/// - `user_votes`: The new votes to process
+/// - `stored_user_votes`: Existing user votes from the database (keyed by criteria)
+/// - `stored_vote_counts`: Existing vote counts from the database (keyed by criteria)
+///
+/// Returns the updated vote counts that should be upserted to the database.
+pub fn calculate_vote_counts(
+    user_votes: &[UserVoteItem],
+    stored_user_votes: &HashMap<UserVoteCriteria, UserVoteItem>,
+    stored_vote_counts: &HashMap<VoteCountCriteria, VotesCountItem>,
+) -> Vec<VotesCountItem> {
+    let mut vote_counts_map: HashMap<VoteCountCriteria, VotesCountItem> = stored_vote_counts.clone();
+
+    for new_vote in user_votes {
+        let vote_criteria = (
+            new_vote.voter_id,
+            new_vote.object_id,
+            new_vote.space_id,
+            new_vote.object_type,
+        );
+        let count_criteria = (new_vote.object_id, new_vote.space_id, new_vote.object_type);
+
+        let stored_user_vote = stored_user_votes.get(&vote_criteria);
+        let vote_delta = compute_vote_delta(stored_user_vote, new_vote);
+
+        let vote_count = vote_counts_map
+            .entry(count_criteria)
+            .or_insert_with(|| VotesCountItem {
+                object_id: new_vote.object_id,
+                object_type: new_vote.object_type,
+                space_id: new_vote.space_id,
+                upvotes: 0,
+                downvotes: 0,
+            });
+
+        vote_count.upvotes += vote_delta.upvotes as i64;
+        vote_count.downvotes += vote_delta.downvotes as i64;
+    }
+
+    vote_counts_map.into_values().collect()
 }
 
 #[cfg(test)]
@@ -186,6 +290,300 @@ mod tests {
     fn test_parse_object_type_too_short() {
         let result = parse_object_type(&[0x00, 0x00]);
         assert!(matches!(result, Err(HandlerError::InvalidObjectType(_))));
+    }
+
+    // ============================================================================
+    // get_latest_user_votes Tests
+    // ============================================================================
+
+    fn make_vote_item(
+        voter_id: Uuid,
+        object_id: Uuid,
+        space_id: Uuid,
+        object_type: VoteObjectType,
+        vote: VoteValue,
+        block_timestamp: u64,
+    ) -> VoteItem {
+        VoteItem {
+            voter_id,
+            object_id,
+            object_type,
+            space_id,
+            vote,
+            block_number: 1,
+            block_timestamp,
+        }
+    }
+
+    #[test]
+    fn test_get_latest_user_votes_single_vote() {
+        let voter = Uuid::from_bytes([1u8; 16]);
+        let object = Uuid::from_bytes([2u8; 16]);
+        let space = Uuid::from_bytes([3u8; 16]);
+
+        let vote = make_vote_item(voter, object, space, VoteObjectType::Entity, VoteValue::Up, 1000);
+        let votes = vec![vote];
+
+        let user_votes = get_latest_user_votes(&votes);
+
+        assert_eq!(user_votes.len(), 1);
+        assert_eq!(user_votes[0].voter_id, voter);
+        assert_eq!(user_votes[0].object_id, object);
+        assert_eq!(user_votes[0].space_id, space);
+        assert_eq!(user_votes[0].vote_type, VoteValue::Up);
+    }
+
+    #[test]
+    fn test_get_latest_user_votes_empty_input() {
+        let votes: Vec<VoteItem> = Vec::new();
+        let user_votes = get_latest_user_votes(&votes);
+        assert!(user_votes.is_empty());
+    }
+
+    #[test]
+    fn test_get_latest_user_votes_same_user_same_entity_keeps_latest() {
+        let voter = Uuid::from_bytes([1u8; 16]);
+        let object = Uuid::from_bytes([2u8; 16]);
+        let space = Uuid::from_bytes([3u8; 16]);
+
+        let vote1 = make_vote_item(voter, object, space, VoteObjectType::Entity, VoteValue::Up, 1000);
+        let vote2 = make_vote_item(voter, object, space, VoteObjectType::Entity, VoteValue::Down, 2000);
+
+        let votes = vec![vote1, vote2];
+        let user_votes = get_latest_user_votes(&votes);
+
+        // Should only return one vote (the latest one)
+        assert_eq!(user_votes.len(), 1);
+        assert_eq!(user_votes[0].vote_type, VoteValue::Down);
+        assert_eq!(user_votes[0].voted_at, 2000);
+    }
+
+    #[test]
+    fn test_get_latest_user_votes_different_users_same_entity() {
+        let voter1 = Uuid::from_bytes([1u8; 16]);
+        let voter2 = Uuid::from_bytes([2u8; 16]);
+        let object = Uuid::from_bytes([3u8; 16]);
+        let space = Uuid::from_bytes([4u8; 16]);
+
+        let vote1 = make_vote_item(voter1, object, space, VoteObjectType::Entity, VoteValue::Up, 1000);
+        let vote2 = make_vote_item(voter2, object, space, VoteObjectType::Entity, VoteValue::Down, 2000);
+
+        let votes = vec![vote1, vote2];
+        let user_votes = get_latest_user_votes(&votes);
+
+        // Should return both votes since they're from different users
+        assert_eq!(user_votes.len(), 2);
+    }
+
+    #[test]
+    fn test_get_latest_user_votes_same_user_different_object_types() {
+        let voter = Uuid::from_bytes([1u8; 16]);
+        let object = Uuid::from_bytes([2u8; 16]);
+        let space = Uuid::from_bytes([3u8; 16]);
+
+        let vote1 = make_vote_item(voter, object, space, VoteObjectType::Entity, VoteValue::Up, 1000);
+        let vote2 = make_vote_item(voter, object, space, VoteObjectType::Relation, VoteValue::Down, 2000);
+
+        let votes = vec![vote1, vote2];
+        let user_votes = get_latest_user_votes(&votes);
+
+        // Should return both votes since they're for different object types
+        assert_eq!(user_votes.len(), 2);
+    }
+
+    // ============================================================================
+    // compute_vote_delta Tests
+    // ============================================================================
+
+    fn make_user_vote_item(vote_type: VoteValue) -> UserVoteItem {
+        UserVoteItem {
+            voter_id: Uuid::from_bytes([1u8; 16]),
+            object_id: Uuid::from_bytes([2u8; 16]),
+            object_type: VoteObjectType::Entity,
+            space_id: Uuid::from_bytes([3u8; 16]),
+            vote_type,
+            voted_at: 1000,
+        }
+    }
+
+    #[test]
+    fn test_compute_vote_delta_upvote_to_downvote() {
+        let prev = make_user_vote_item(VoteValue::Up);
+        let new = make_user_vote_item(VoteValue::Down);
+
+        let delta = compute_vote_delta(Some(&prev), &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: -1, downvotes: 1 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_upvote_to_remove() {
+        let prev = make_user_vote_item(VoteValue::Up);
+        let new = make_user_vote_item(VoteValue::Remove);
+
+        let delta = compute_vote_delta(Some(&prev), &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: -1, downvotes: 0 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_downvote_to_upvote() {
+        let prev = make_user_vote_item(VoteValue::Down);
+        let new = make_user_vote_item(VoteValue::Up);
+
+        let delta = compute_vote_delta(Some(&prev), &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: 1, downvotes: -1 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_downvote_to_remove() {
+        let prev = make_user_vote_item(VoteValue::Down);
+        let new = make_user_vote_item(VoteValue::Remove);
+
+        let delta = compute_vote_delta(Some(&prev), &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: 0, downvotes: -1 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_new_upvote() {
+        let new = make_user_vote_item(VoteValue::Up);
+
+        let delta = compute_vote_delta(None, &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: 1, downvotes: 0 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_new_downvote() {
+        let new = make_user_vote_item(VoteValue::Down);
+
+        let delta = compute_vote_delta(None, &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: 0, downvotes: 1 });
+    }
+
+    #[test]
+    fn test_compute_vote_delta_same_vote_no_change() {
+        let prev = make_user_vote_item(VoteValue::Up);
+        let new = make_user_vote_item(VoteValue::Up);
+
+        let delta = compute_vote_delta(Some(&prev), &new);
+
+        assert_eq!(delta, VotesDelta { upvotes: 0, downvotes: 0 });
+    }
+
+    // ============================================================================
+    // calculate_vote_counts Tests
+    // ============================================================================
+
+    #[test]
+    fn test_calculate_vote_counts_new_upvote_no_existing() {
+        let voter = Uuid::from_bytes([1u8; 16]);
+        let object = Uuid::from_bytes([2u8; 16]);
+        let space = Uuid::from_bytes([3u8; 16]);
+
+        let user_votes = vec![UserVoteItem {
+            voter_id: voter,
+            object_id: object,
+            object_type: VoteObjectType::Entity,
+            space_id: space,
+            vote_type: VoteValue::Up,
+            voted_at: 1000,
+        }];
+
+        let stored_user_votes: HashMap<UserVoteCriteria, UserVoteItem> = HashMap::new();
+        let stored_vote_counts: HashMap<VoteCountCriteria, VotesCountItem> = HashMap::new();
+
+        let counts = calculate_vote_counts(&user_votes, &stored_user_votes, &stored_vote_counts);
+
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].upvotes, 1);
+        assert_eq!(counts[0].downvotes, 0);
+    }
+
+    #[test]
+    fn test_calculate_vote_counts_change_upvote_to_downvote() {
+        let voter = Uuid::from_bytes([1u8; 16]);
+        let object = Uuid::from_bytes([2u8; 16]);
+        let space = Uuid::from_bytes([3u8; 16]);
+
+        let user_votes = vec![UserVoteItem {
+            voter_id: voter,
+            object_id: object,
+            object_type: VoteObjectType::Entity,
+            space_id: space,
+            vote_type: VoteValue::Down,
+            voted_at: 2000,
+        }];
+
+        let mut stored_user_votes: HashMap<UserVoteCriteria, UserVoteItem> = HashMap::new();
+        stored_user_votes.insert(
+            (voter, object, space, VoteObjectType::Entity),
+            UserVoteItem {
+                voter_id: voter,
+                object_id: object,
+                object_type: VoteObjectType::Entity,
+                space_id: space,
+                vote_type: VoteValue::Up,
+                voted_at: 1000,
+            },
+        );
+
+        let mut stored_vote_counts: HashMap<VoteCountCriteria, VotesCountItem> = HashMap::new();
+        stored_vote_counts.insert(
+            (object, space, VoteObjectType::Entity),
+            VotesCountItem {
+                object_id: object,
+                object_type: VoteObjectType::Entity,
+                space_id: space,
+                upvotes: 5,
+                downvotes: 2,
+            },
+        );
+
+        let counts = calculate_vote_counts(&user_votes, &stored_user_votes, &stored_vote_counts);
+
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].upvotes, 4); // 5 - 1
+        assert_eq!(counts[0].downvotes, 3); // 2 + 1
+    }
+
+    #[test]
+    fn test_calculate_vote_counts_multiple_users_same_object() {
+        let voter1 = Uuid::from_bytes([1u8; 16]);
+        let voter2 = Uuid::from_bytes([2u8; 16]);
+        let object = Uuid::from_bytes([3u8; 16]);
+        let space = Uuid::from_bytes([4u8; 16]);
+
+        let user_votes = vec![
+            UserVoteItem {
+                voter_id: voter1,
+                object_id: object,
+                object_type: VoteObjectType::Entity,
+                space_id: space,
+                vote_type: VoteValue::Up,
+                voted_at: 1000,
+            },
+            UserVoteItem {
+                voter_id: voter2,
+                object_id: object,
+                object_type: VoteObjectType::Entity,
+                space_id: space,
+                vote_type: VoteValue::Down,
+                voted_at: 1000,
+            },
+        ];
+
+        let stored_user_votes: HashMap<UserVoteCriteria, UserVoteItem> = HashMap::new();
+        let stored_vote_counts: HashMap<VoteCountCriteria, VotesCountItem> = HashMap::new();
+
+        let counts = calculate_vote_counts(&user_votes, &stored_user_votes, &stored_vote_counts);
+
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].upvotes, 1);
+        assert_eq!(counts[0].downvotes, 1);
     }
 }
 
