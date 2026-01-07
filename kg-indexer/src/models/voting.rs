@@ -32,8 +32,6 @@ pub struct VoteItem {
     pub block_number: u64,
     /// Block timestamp when vote was cast
     pub block_timestamp: u64,
-    /// Transaction hash
-    pub tx_hash: String,
 }
 
 /// Current vote state per user/entity/space (for upsert operations)
