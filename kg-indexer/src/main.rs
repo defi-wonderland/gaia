@@ -467,12 +467,15 @@ async fn process_votes_batch(
         .map(|v| handlers::voting::handle_vote_cast(v))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Deduplicate, keeping the latest vote per user/object/space/type
-    let user_votes = handlers::voting::get_latest_user_votes(&vote_items);
-
-    if user_votes.is_empty() {
+    if vote_items.is_empty() {
         return Ok(0);
     }
+
+    // Store raw vote events before deduplication
+    storage.insert_votes(&vote_items, tx).await?;
+
+    // Deduplicate, keeping the latest vote per user/object/space/type
+    let user_votes = handlers::voting::get_latest_user_votes(&vote_items);
 
     // Build criteria for batch fetching existing data
     let user_vote_criteria: Vec<_> = user_votes
