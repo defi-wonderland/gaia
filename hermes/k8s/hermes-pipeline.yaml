@@ -1,42 +1,104 @@
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: hermes-pipeline
-  namespace: kafka
+  namespace: knowledge
+  labels:
+    app: hermes-pipeline
 spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes-pipeline
   template:
     metadata:
       labels:
         app: hermes-pipeline
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
       imagePullSecrets:
         - name: regcred
+      volumes:
+        - name: ssl-certs
+          emptyDir: {}
+      initContainers:
+        - name: setup-certs
+          image: registry.digitalocean.com/geo/hermes-pipeline:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              echo "$DATABASE_SSL_CA" > /ssl/ca.crt
+          env:
+            - name: DATABASE_SSL_CA
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: DATABASE_SSL_CA
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /ssl
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: hermes-pipeline
           image: registry.digitalocean.com/geo/hermes-pipeline:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /ssl
+              readOnly: true
           env:
+            - name: PGSSLROOTCERT
+              value: /ssl/ca.crt
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: api-secrets
+                  key: DATABASE_URL
             - name: KAFKA_BROKER
               valueFrom:
                 secretKeyRef:
-                  name: kafka-credentials
+                  name: kg-indexer-secrets
                   key: KAFKA_BROKER
             - name: KAFKA_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: kafka-credentials
+                  name: kg-indexer-secrets
                   key: KAFKA_USERNAME
             - name: KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: kafka-credentials
+                  name: kg-indexer-secrets
                   key: KAFKA_PASSWORD
             - name: KAFKA_SSL_CA_PEM
               valueFrom:
                 secretKeyRef:
-                  name: kafka-credentials
+                  name: kg-indexer-secrets
                   key: KAFKA_SSL_CA_PEM
+            - name: SUBSTREAMS_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-ipfs-cache-secrets
+                  key: SUBSTREAMS_ENDPOINT
+            - name: SUBSTREAMS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-ipfs-cache-secrets
+                  key: SUBSTREAMS_API_TOKEN
             - name: OTEL_URL
               valueFrom:
                 secretKeyRef:
