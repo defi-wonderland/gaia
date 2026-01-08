@@ -539,38 +539,13 @@ export type DbProposalVote = InferSelectModel<typeof proposalVotes>;
 /** Actions Schema definitions */
 
 /**
- * raw_actions
- */
-export const rawActions = pgTable(
-	"raw_actions",
-	{
-		id: serial("id").primaryKey(),
-		actionType: bigint("action_type", { mode: "number" }).notNull(),
-		actionVersion: bigint("action_version", { mode: "number" }).notNull(),
-		sender: varchar("sender", { length: 42 }).notNull(),
-		objectId: uuid("object_id").notNull(),
-		groupId: uuid("group_id"),
-		spacePov: uuid("space_pov").notNull(),
-		metadata: bytea("metadata"),
-		blockNumber: bigint("block_number", { mode: "number" }).notNull(),
-		blockTimestamp: timestamp("block_timestamp", {
-			withTimezone: true,
-			mode: "date",
-		}).notNull(),
-		txHash: varchar("tx_hash", { length: 66 }).notNull(),
-		objectType: smallint("object_type").notNull(),
-	},
-	// no explicit indexes/uniques defined in SQL for this table
-);
-
-/**
  * user_votes
  */
 export const userVotes = pgTable(
 	"user_votes",
 	{
 		id: serial("id").primaryKey(),
-		userId: varchar("user_id", { length: 42 }).notNull(),
+		userId: uuid("user_id").notNull(),
 		objectId: uuid("object_id").notNull(),
 		objectType: smallint("object_type").notNull(),
 		spaceId: uuid("space_id").notNull(),
@@ -622,6 +597,30 @@ export const votesCount = pgTable(
 		};
 	},
 );
+
+/**
+ * votes
+ */
+export const votes = pgTable("votes", {
+	id: serial("id").primaryKey(),
+	voterId: uuid("voter_id").notNull(),
+	objectId: uuid("object_id").notNull(),
+	objectType: smallint("object_type").notNull(),
+	spaceId: uuid("space_id").notNull(),
+	vote: smallint("vote").notNull(),
+	blockNumber: bigint("block_number", { mode: "number" }).notNull(),
+	blockTimestamp: timestamp("block_timestamp", {
+		withTimezone: true,
+		mode: "date",
+	}).notNull(),
+}, (table) => {
+	return {
+		idxVoterId: index("idx_votes_voter_id").on(table.voterId),
+		idxObjectId: index("idx_votes_object_id").on(table.objectId),
+		idxSpaceId: index("idx_votes_space_id").on(table.spaceId),
+		idxBlockNumber: index("idx_votes_block_number").on(table.blockNumber),
+	};
+});
 
 /** Scoring Tables */
 
