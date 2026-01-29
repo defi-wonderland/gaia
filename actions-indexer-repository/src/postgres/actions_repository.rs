@@ -98,9 +98,9 @@ impl PostgresActionsRepository {
                             "0x{}",
                             hex::encode(vote_action.raw.sender.as_slice())
                         ))
-                        .push_bind(vote_action.raw.object_id.clone())
-                        .push_bind(vote_action.raw.group_id.clone())
-                        .push_bind(vote_action.raw.space_pov.clone())
+                        .push_bind(vote_action.raw.object_id)
+                        .push_bind(vote_action.raw.group_id)
+                        .push_bind(vote_action.raw.space_pov)
                         .push_bind(
                             vote_action
                                 .raw
@@ -157,9 +157,9 @@ impl PostgresActionsRepository {
                     voted_at = EXCLUDED.voted_at
                 "#,
                 format!("0x{}", hex::encode(vote.user_id.as_slice())),
-                vote.object_id.clone(),
+                vote.object_id,
                 vote.object_type as i16,
-                vote.space_id.clone(),
+                vote.space_id,
                 match vote.vote_type {
                     VoteValue::Up => 0,
                     VoteValue::Down => 1,
@@ -207,9 +207,9 @@ impl PostgresActionsRepository {
                     upvotes = EXCLUDED.upvotes,
                     downvotes = EXCLUDED.downvotes
                 "#,
-                count.object_id.clone(),
+                count.object_id,
                 count.object_type as i16,
-                count.space_id.clone(),
+                count.space_id,
                 count.upvotes,
                 count.downvotes
             )
@@ -240,11 +240,11 @@ impl ActionsRepository for PostgresActionsRepository {
             .pool
             .begin()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         self.insert_actions_tx(actions, &mut tx).await?;
         tx.commit()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         Ok(())
     }
 
@@ -269,11 +269,11 @@ impl ActionsRepository for PostgresActionsRepository {
             .pool
             .begin()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         self.update_user_votes_tx(user_votes, &mut tx).await?;
         tx.commit()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         Ok(())
     }
 
@@ -298,11 +298,11 @@ impl ActionsRepository for PostgresActionsRepository {
             .pool
             .begin()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         self.update_votes_counts_tx(votes_counts, &mut tx).await?;
         tx.commit()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         Ok(())
     }
 
@@ -327,7 +327,7 @@ impl ActionsRepository for PostgresActionsRepository {
             .pool
             .begin()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         self.insert_actions_tx(changeset.actions, &mut tx).await?;
         self.update_user_votes_tx(changeset.user_votes, &mut tx)
             .await?;
@@ -335,7 +335,7 @@ impl ActionsRepository for PostgresActionsRepository {
             .await?;
         tx.commit()
             .await
-            .map_err(|e| ActionsRepositoryError::DatabaseError(e))?;
+            .map_err(ActionsRepositoryError::DatabaseError)?;
         Ok(())
     }
 
@@ -394,7 +394,7 @@ impl ActionsRepository for PostgresActionsRepository {
                     1 => ObjectType::Relation,
                     _ => {
                         return Err(ActionsRepositoryError::InvalidObjectType(
-                            v.object_type as i16,
+                            v.object_type,
                         ));
                     }
                 },
@@ -436,7 +436,7 @@ impl ActionsRepository for PostgresActionsRepository {
         let space_ids: Vec<Uuid> = vote_criteria.iter().map(|(_, s, _)| *s).collect();
         let object_types: Vec<i16> = vote_criteria
             .iter()
-            .map(|(_, _, o)| o.clone() as i16)
+            .map(|(_, _, o)| *o as i16)
             .collect();
 
         let counts = sqlx::query!(
@@ -462,7 +462,7 @@ impl ActionsRepository for PostgresActionsRepository {
                     1 => ObjectType::Relation,
                     _ => {
                         return Err(ActionsRepositoryError::InvalidObjectType(
-                            c.object_type as i16,
+                            c.object_type,
                         ));
                     }
                 },

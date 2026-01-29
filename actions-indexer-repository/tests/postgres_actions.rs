@@ -5,6 +5,8 @@
 //!
 //! Run with: `cargo test --test postgres_actions`
 
+#![allow(clippy::cloned_ref_to_slice_refs)]
+
 use actions_indexer_repository::{ActionsRepository, PostgresActionsRepository};
 use actions_indexer_shared::types::{
     Action, ActionRaw, ActionType, ObjectType, UserVote, Vote, VoteCriteria, VoteValue, VotesCount,

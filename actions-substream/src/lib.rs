@@ -1,3 +1,4 @@
+#[allow(dead_code, clippy::enum_variant_names)]
 mod pb;
 use hex_literal::hex;
 use pb::actions::v1::{Action, Actions};
@@ -18,13 +19,12 @@ fn map_actions(blk: Block) -> Result<Actions, substreams::errors::Error> {
             let block_timestamp = blk
                 .header
                 .as_ref()
-                .map(|h| h.timestamp.as_ref().map(|t| t.seconds as u64))
-                .flatten()
+                .and_then(|h| h.timestamp.as_ref().map(|t| t.seconds as u64))
                 .unwrap_or(0);
 
             for log in &receipt.logs {
                 if is_address_in_contracts(&log.address) {
-                    if let Some(action) = decode_action_log(&log)? {
+                    if let Some(action) = decode_action_log(log)? {
                         let action = Action {
                             action_type: action.action_type,
                             action_version: action.action_version,
