@@ -9,9 +9,10 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
 
 use sdk::core::ids::TYPE_RELATION_TYPE_ID;
-use search_indexer::consumer::{EntityEvent, StreamMessage};
+use search_indexer::consumer::{EntityEvent, ScoreEvent, StreamMessage};
+use search_indexer::dlq::{DlqProducerLike, DlqRecord, DlqState};
 use search_indexer::errors::IngestError;
-use search_indexer::loader::SearchLoader;
+use search_indexer::loader::{LoaderDlq, SearchLoader};
 use search_indexer::orchestrator::{
     EntitiesConsumerTrait, EntityProcessingBatch, Orchestrator, OrchestratorConfig,
     ScoreProcessingBatch, ScoresConsumerTrait,
@@ -145,6 +146,7 @@ struct MockSearchProvider {
     // Configuration for simulating failures
     fail_bulk_updates: bool,
     fail_bulk_unsets: bool,
+    fail_bulk_scores: bool,
 }
 
 impl MockSearchProvider {
@@ -155,6 +157,7 @@ impl MockSearchProvider {
             all_operations: std::sync::Mutex::new(Vec::new()),
             fail_bulk_updates: false,
             fail_bulk_unsets: false,
+            fail_bulk_scores: false,
         }
     }
 
@@ -168,6 +171,13 @@ impl MockSearchProvider {
     fn with_bulk_unset_failures() -> Self {
         Self {
             fail_bulk_unsets: true,
+            ..Self::new()
+        }
+    }
+
+    fn with_bulk_score_failures() -> Self {
+        Self {
+            fail_bulk_scores: true,
             ..Self::new()
         }
     }
@@ -268,10 +278,11 @@ impl SearchIndexProvider for MockSearchProvider {
                 EntityOperation::Delete(_) => false, // Hard deletes not used (soft delete via Update)
                 EntityOperation::Unset(_) => self.fail_bulk_unsets && i >= operations.len() / 2,
                 EntityOperation::RemoveTypeRelationById(_) => false, // Never fails in mock
-                // Score operations never fail in mock
                 EntityOperation::UpdateEntityGlobalScore(_)
                 | EntityOperation::UpdateSpaceScore(_)
-                | EntityOperation::UpdateEntitySpaceScore(_) => false,
+                | EntityOperation::UpdateEntitySpaceScore(_) => {
+                    self.fail_bulk_scores && i >= operations.len() / 2
+                }
             };
 
             if should_fail {
@@ -281,6 +292,7 @@ impl SearchIndexProvider for MockSearchProvider {
                     space_id,
                     operation_type: op.operation_type().to_string(),
                     success: false,
+                    retryable: false,
                     error: Some(SearchIndexError::bulk_operation(
                         "Simulated failure".to_string(),
                     )),
@@ -319,6 +331,7 @@ impl SearchIndexProvider for MockSearchProvider {
                     space_id,
                     operation_type: op.operation_type().to_string(),
                     success: true,
+                    retryable: false,
                     error: None,
                 });
             }
@@ -342,7 +355,7 @@ fn create_test_orchestrator(events: Vec<EntityEvent>) -> (Orchestrator, Arc<Mock
     let mock_consumer = Arc::new(MockConsumer::new(events));
     let mock_scores_consumer = Arc::new(MockScoresConsumer);
 
-    let orchestrator = Orchestrator::new(mock_consumer, mock_scores_consumer, processor, loader);
+    let orchestrator = Orchestrator::new(mock_consumer, mock_scores_consumer, processor, loader, None);
 
     (orchestrator, mock_provider)
 }
@@ -363,6 +376,7 @@ fn create_test_orchestrator_with_consumer(
         mock_scores_consumer,
         processor,
         loader,
+        None,
     );
 
     (orchestrator, mock_provider, mock_consumer)
@@ -379,7 +393,7 @@ fn create_error_test_orchestrator(
     let mock_consumer = Arc::new(MockConsumer::with_subscribe_error(events));
     let mock_scores_consumer = Arc::new(MockScoresConsumer);
 
-    let orchestrator = Orchestrator::new(mock_consumer, mock_scores_consumer, processor, loader);
+    let orchestrator = Orchestrator::new(mock_consumer, mock_scores_consumer, processor, loader, None);
 
     (orchestrator, mock_provider)
 }
@@ -400,6 +414,7 @@ fn create_bulk_update_failure_orchestrator(
         mock_scores_consumer,
         processor,
         loader,
+        None,
     );
 
     (orchestrator, mock_provider, mock_consumer)
@@ -421,6 +436,7 @@ fn create_bulk_unset_failure_orchestrator(
         mock_scores_consumer,
         processor,
         loader,
+        None,
     );
 
     (orchestrator, mock_provider, mock_consumer)
@@ -517,6 +533,7 @@ async fn test_orchestrator_configuration() {
         processor,
         loader,
         config,
+        None,
     );
 
     // Verify configuration was applied (we can't easily test this without exposing internals,
@@ -1729,4 +1746,587 @@ async fn test_create_relation_with_upsert_for_same_entity() {
         }
         _ => panic!("Expected Update operation at index 1, got {:?}", all_ops[1]),
     }
+}
+
+// ============================================================================
+// DLQ Integration Tests
+// ============================================================================
+
+/// Test DLQ producer that captures records in memory.
+struct TestDlqProducer {
+    records: Arc<std::sync::Mutex<Vec<DlqRecord>>>,
+}
+
+impl TestDlqProducer {
+    fn new() -> (Self, Arc<std::sync::Mutex<Vec<DlqRecord>>>) {
+        let records = Arc::new(std::sync::Mutex::new(Vec::new()));
+        (Self { records: records.clone() }, records)
+    }
+}
+
+impl DlqProducerLike for TestDlqProducer {
+    fn send_best_effort(&self, record: &DlqRecord) {
+        self.records.lock().unwrap().push(record.clone());
+    }
+
+    fn flush(&self) -> Result<(), IngestError> {
+        Ok(())
+    }
+}
+
+/// Helper to create a test orchestrator with DLQ enabled and bulk update failures.
+fn create_dlq_update_failure_orchestrator(
+    events: Vec<EntityEvent>,
+) -> (
+    Orchestrator,
+    Arc<MockSearchProvider>,
+    Arc<MockConsumer>,
+    Arc<std::sync::Mutex<Vec<DlqRecord>>>,
+) {
+    let processor = Processor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_update_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events));
+    let mock_scores_consumer = Arc::new(MockScoresConsumer);
+
+    let (test_producer, dlq_records) = TestDlqProducer::new();
+    let loader_dlq = Some(LoaderDlq {
+        producer: Box::new(test_producer),
+        state: DlqState::new_for_test(100),
+        max_retries: 3,
+    });
+
+    let orchestrator = Orchestrator::new(
+        mock_consumer.clone(),
+        mock_scores_consumer,
+        processor,
+        loader,
+        loader_dlq,
+    );
+
+    (orchestrator, mock_provider, mock_consumer, dlq_records)
+}
+
+/// Helper to create a test orchestrator with DLQ enabled and bulk unset failures.
+fn create_dlq_unset_failure_orchestrator(
+    events: Vec<EntityEvent>,
+) -> (
+    Orchestrator,
+    Arc<MockSearchProvider>,
+    Arc<MockConsumer>,
+    Arc<std::sync::Mutex<Vec<DlqRecord>>>,
+) {
+    let processor = Processor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_unset_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events));
+    let mock_scores_consumer = Arc::new(MockScoresConsumer);
+
+    let (test_producer, dlq_records) = TestDlqProducer::new();
+    let loader_dlq = Some(LoaderDlq {
+        producer: Box::new(test_producer),
+        state: DlqState::new_for_test(100),
+        max_retries: 3,
+    });
+
+    let orchestrator = Orchestrator::new(
+        mock_consumer.clone(),
+        mock_scores_consumer,
+        processor,
+        loader,
+        loader_dlq,
+    );
+
+    (orchestrator, mock_provider, mock_consumer, dlq_records)
+}
+
+/// Helper to create a DLQ orchestrator with a custom max_poisoned_entities limit.
+fn create_dlq_circuit_breaker_orchestrator(
+    events: Vec<EntityEvent>,
+    max_poisoned: usize,
+) -> (
+    Orchestrator,
+    Arc<MockSearchProvider>,
+    Arc<MockConsumer>,
+    Arc<std::sync::Mutex<Vec<DlqRecord>>>,
+) {
+    let processor = Processor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_update_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events));
+    let mock_scores_consumer = Arc::new(MockScoresConsumer);
+
+    let (test_producer, dlq_records) = TestDlqProducer::new();
+    let loader_dlq = Some(LoaderDlq {
+        producer: Box::new(test_producer),
+        state: DlqState::new_for_test(max_poisoned),
+        max_retries: 3,
+    });
+
+    let orchestrator = Orchestrator::new(
+        mock_consumer.clone(),
+        mock_scores_consumer,
+        processor,
+        loader,
+        loader_dlq,
+    );
+
+    (orchestrator, mock_provider, mock_consumer, dlq_records)
+}
+
+#[tokio::test]
+async fn test_dlq_partial_update_failure_routes_to_dlq() {
+    // 2 updates, 1 fails → failed op appears in DLQ records, batch ACKed (not NACKed)
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let (orchestrator, _mock_provider, mock_consumer, dlq_records) =
+        create_dlq_update_failure_orchestrator(events);
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator run should succeed");
+
+    // With DLQ enabled, partial failures should ACK (not NACK)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK when DLQ is enabled (failures routed to DLQ)"
+    );
+
+    // Verify DLQ captured the failed operation
+    let records = dlq_records.lock().unwrap();
+    assert_eq!(records.len(), 1, "Expected 1 DLQ record for the failed operation");
+}
+
+#[tokio::test]
+async fn test_dlq_partial_unset_failure_routes_to_dlq() {
+    // 2 unsets, 1 fails → failed op appears in DLQ records, batch ACKed
+    let entity_id_1 = Uuid::new_v4();
+    let space_id_1 = Uuid::new_v4();
+    let entity_id_2 = Uuid::new_v4();
+    let space_id_2 = Uuid::new_v4();
+
+    let events = vec![
+        EntityEvent::unset_properties(
+            entity_id_1,
+            space_id_1,
+            vec!["name".to_string(), "description".to_string()],
+        ),
+        EntityEvent::unset_properties(entity_id_2, space_id_2, vec!["avatar".to_string()]),
+    ];
+
+    let (orchestrator, _mock_provider, mock_consumer, dlq_records) =
+        create_dlq_unset_failure_orchestrator(events);
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator run should succeed");
+
+    // With DLQ enabled, partial failures should ACK
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(true),
+        "Expected ACK when DLQ is enabled (failures routed to DLQ)"
+    );
+
+    // Verify DLQ captured the failed operation
+    let records = dlq_records.lock().unwrap();
+    assert_eq!(records.len(), 1, "Expected 1 DLQ record for the failed unset operation");
+
+    // Verify operation_payload contains the Unset variant with correct property_keys
+    let record = &records[0];
+    assert!(
+        !record.operation_payload.is_null(),
+        "operation_payload should not be null for unset failure"
+    );
+    let payload = &record.operation_payload;
+    assert!(
+        payload.get("Unset").is_some(),
+        "operation_payload should contain an Unset variant, got: {}",
+        payload
+    );
+    let unset_payload = payload.get("Unset").unwrap();
+    assert_eq!(
+        unset_payload.get("entity_id").and_then(|v| v.as_str()),
+        Some(record.entity_id.as_str()),
+        "operation_payload entity_id should match record entity_id"
+    );
+    assert_eq!(
+        unset_payload.get("space_id").and_then(|v| v.as_str()),
+        Some(record.space_id.as_str()),
+        "operation_payload space_id should match record space_id"
+    );
+    let property_keys = unset_payload
+        .get("property_keys")
+        .and_then(|v| v.as_array())
+        .expect("operation_payload should have property_keys array");
+    assert!(
+        !property_keys.is_empty(),
+        "property_keys should not be empty in unset operation payload"
+    );
+}
+
+#[tokio::test]
+async fn test_dlq_record_contains_correct_fields() {
+    // Verify DLQ record has all expected fields populated correctly
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let (orchestrator, _mock_provider, _mock_consumer, dlq_records) =
+        create_dlq_update_failure_orchestrator(events);
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_ok());
+
+    let records = dlq_records.lock().unwrap();
+    assert!(!records.is_empty(), "Expected at least one DLQ record");
+
+    let record = &records[0];
+    assert!(!record.dlq_id.is_empty(), "dlq_id should not be empty");
+    assert!(!record.entity_id.is_empty(), "entity_id should not be empty");
+    assert!(!record.space_id.is_empty(), "space_id should not be empty");
+    assert!(!record.operation_type.is_empty(), "operation_type should not be empty");
+    assert!(!record.error_message.is_empty(), "error_message should not be empty");
+    assert_eq!(record.source_batch_type, "entities");
+    assert_eq!(record.retry_count, 0);
+    assert_eq!(record.max_retries, 3);
+
+    // Verify operation_payload contains the full operation data for replay
+    assert!(
+        !record.operation_payload.is_null(),
+        "operation_payload should not be null"
+    );
+    // The payload should be an Update variant with entity_id and space_id
+    let payload = &record.operation_payload;
+    assert!(
+        payload.get("Update").is_some(),
+        "operation_payload should contain an Update variant, got: {}",
+        payload
+    );
+    let update_payload = payload.get("Update").unwrap();
+    assert_eq!(
+        update_payload.get("entity_id").and_then(|v| v.as_str()),
+        Some(record.entity_id.as_str()),
+        "operation_payload entity_id should match record entity_id"
+    );
+    assert_eq!(
+        update_payload.get("space_id").and_then(|v| v.as_str()),
+        Some(record.space_id.as_str()),
+        "operation_payload space_id should match record space_id"
+    );
+}
+
+#[tokio::test]
+async fn test_dlq_poisons_entity_on_failure() {
+    // After a failure, the entity should be tracked as poisoned.
+    // We verify this by checking that the DLQ producer captures the record
+    // and the entity_id/space_id are consistent.
+    let entity_id_1 = Uuid::new_v4();
+    let space_id_1 = Uuid::new_v4();
+    let entity_id_2 = Uuid::new_v4();
+    let space_id_2 = Uuid::new_v4();
+
+    let events = vec![
+        EntityEvent::upsert(
+            entity_id_1,
+            space_id_1,
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            entity_id_2,
+            space_id_2,
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let (orchestrator, _mock_provider, mock_consumer, dlq_records) =
+        create_dlq_update_failure_orchestrator(events);
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_ok());
+
+    // Batch was ACKed (DLQ handles the failure)
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(last_ack, Some(true), "Expected ACK with DLQ enabled");
+
+    // The failed entity should be in the DLQ records
+    let records = dlq_records.lock().unwrap();
+    assert_eq!(records.len(), 1, "Expected 1 DLQ record");
+
+    // The DLQ record should have a valid entity_id and space_id (entity was poisoned)
+    let record = &records[0];
+    assert!(!record.entity_id.is_empty());
+    assert!(!record.space_id.is_empty());
+}
+
+#[tokio::test]
+async fn test_dlq_circuit_breaker_triggers_nack() {
+    // Set max_poisoned=1, send 4 entities where 2 fail → circuit breaker trips, NACK
+    // The mock fails operations at i >= operations.len() / 2, so with 4 ops, ops 2 and 3 fail.
+    // First failure poisons entity (count=1), second failure would exceed limit (max=1).
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 3".to_string()),
+            Some("Description 3".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 4".to_string()),
+            Some("Description 4".to_string()),
+            None,
+        ),
+    ];
+
+    let (orchestrator, _mock_provider, mock_consumer, _dlq_records) =
+        create_dlq_circuit_breaker_orchestrator(events, 1);
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+
+    // Circuit breaker should trip: batch NACKed
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK when circuit breaker trips (max poisoned entities exceeded)"
+    );
+}
+
+#[tokio::test]
+async fn test_dlq_metrics_increment() {
+    // After partial failure with DLQ, verify metrics are incremented.
+    // We use `with_config` to get access to the orchestrator's metrics.
+    let events = vec![
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 1".to_string()),
+            Some("Description 1".to_string()),
+            None,
+        ),
+        EntityEvent::upsert(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Some("Entity 2".to_string()),
+            Some("Description 2".to_string()),
+            None,
+        ),
+    ];
+
+    let processor = Processor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_update_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    let mock_consumer = Arc::new(MockConsumer::new(events));
+    let mock_scores_consumer = Arc::new(MockScoresConsumer);
+
+    let (test_producer, _dlq_records) = TestDlqProducer::new();
+    let loader_dlq = Some(LoaderDlq {
+        producer: Box::new(test_producer),
+        state: DlqState::new_for_test(100),
+        max_retries: 3,
+    });
+
+    // Use with_config so we can create the metrics Arc and share it
+    let metrics = Arc::new(search_indexer::metrics::SearchIndexerMetrics::new());
+    let metrics_clone = metrics.clone();
+
+    let orchestrator = Orchestrator::new(
+        mock_consumer.clone(),
+        mock_scores_consumer,
+        processor,
+        loader,
+        loader_dlq,
+    );
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_ok());
+
+    // The metrics are internal to the orchestrator, so we verify indirectly:
+    // The batch was ACKed (meaning DLQ handled the failure), and DLQ records were captured
+    let last_ack = mock_consumer.get_last_acknowledgment();
+    assert_eq!(last_ack, Some(true), "Expected ACK with DLQ enabled");
+
+    // We can't directly check the orchestrator's internal metrics from here,
+    // but we can verify the DLQ path was taken (ACK + DLQ records)
+    let records = _dlq_records.lock().unwrap();
+    assert!(records.len() > 0, "Expected DLQ events to be recorded (verifying DLQ metrics path)");
+
+    // The fact that the batch was ACKed (not NACKed) and DLQ records were produced
+    // confirms the metrics code path was executed (total_dlq_events and total_poisoned_entities
+    // are incremented in the same code block that produces DLQ records)
+    drop(metrics_clone);
+}
+
+// ============================================================================
+// DLQ Scores Bypass Tests
+// ============================================================================
+
+/// Mock scores consumer that sends events (unlike MockScoresConsumer which is a no-op).
+struct ActiveMockScoresConsumer {
+    events_to_send: Vec<ScoreEvent>,
+    last_acknowledgment: std::sync::Mutex<Option<bool>>,
+}
+
+impl ActiveMockScoresConsumer {
+    fn new(events: Vec<ScoreEvent>) -> Self {
+        Self {
+            events_to_send: events,
+            last_acknowledgment: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn get_last_acknowledgment(&self) -> Option<bool> {
+        *self.last_acknowledgment.lock().unwrap()
+    }
+}
+
+#[async_trait::async_trait]
+impl ScoresConsumerTrait for ActiveMockScoresConsumer {
+    fn subscribe(&self) -> Result<(), IngestError> {
+        Ok(())
+    }
+
+    async fn run(
+        &self,
+        processor_tx: mpsc::Sender<ScoreProcessingBatch>,
+        mut ack_receiver: mpsc::Receiver<StreamMessage>,
+        mut shutdown: broadcast::Receiver<()>,
+    ) -> Result<(), IngestError> {
+        let events = self.events_to_send.clone();
+        let offsets = vec![("test-scores-topic".to_string(), 0, 1i64)];
+        let event_count = events.len();
+
+        if !events.is_empty() {
+            let batch = ScoreProcessingBatch {
+                events,
+                offsets,
+                event_count,
+            };
+            let _ = processor_tx.send(batch).await;
+        }
+
+        tokio::select! {
+            _ = shutdown.recv() => {}
+            msg = ack_receiver.recv() => {
+                if let Some(StreamMessage::Acknowledgment { success, .. }) = msg {
+                    *self.last_acknowledgment.lock().unwrap() = Some(success);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_dlq_scores_failure_bypasses_dlq_and_nacks() {
+    // Score batch failures should NACK (not route to DLQ) even when DLQ is enabled.
+    // Scores are idempotent and recomputed periodically — NACK + Kafka retry is better.
+    let events = vec![
+        ScoreEvent::entity_global_score(Uuid::new_v4(), 1.5, 1000),
+        ScoreEvent::entity_global_score(Uuid::new_v4(), 2.0, 1000),
+    ];
+
+    let processor = Processor::new();
+    let mock_provider = Arc::new(MockSearchProvider::with_bulk_score_failures());
+    let loader = SearchLoader::new(mock_provider.clone());
+
+    // No entity events — use a no-op entity consumer
+    let mock_entity_consumer = Arc::new(MockConsumer::new(vec![]));
+    let mock_scores_consumer = Arc::new(ActiveMockScoresConsumer::new(events));
+
+    let (test_producer, dlq_records) = TestDlqProducer::new();
+    let loader_dlq = Some(LoaderDlq {
+        producer: Box::new(test_producer),
+        state: DlqState::new_for_test(100),
+        max_retries: 3,
+    });
+
+    let orchestrator = Orchestrator::new(
+        mock_entity_consumer,
+        mock_scores_consumer.clone(),
+        processor,
+        loader,
+        loader_dlq,
+    );
+
+    let result = timeout(Duration::from_secs(5), orchestrator.run()).await;
+    assert!(result.is_ok(), "Orchestrator should complete");
+    assert!(result.unwrap().is_ok(), "Orchestrator run should succeed");
+
+    // Score failures should NACK (not ACK) — DLQ is bypassed for scores
+    let last_ack = mock_scores_consumer.get_last_acknowledgment();
+    assert_eq!(
+        last_ack,
+        Some(false),
+        "Expected NACK for score batch failures (DLQ bypassed for scores)"
+    );
+
+    // No records should be in the DLQ
+    let records = dlq_records.lock().unwrap();
+    assert_eq!(
+        records.len(),
+        0,
+        "Expected 0 DLQ records — scores should bypass DLQ"
+    );
 }

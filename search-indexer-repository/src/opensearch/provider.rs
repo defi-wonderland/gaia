@@ -461,6 +461,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: String::new(),
                             operation_type: "RemoveTypeRelation".to_string(),
                             success: true,
+                            retryable: false,
                             error: None,
                         });
                         debug!(
@@ -476,6 +477,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: String::new(),
                             operation_type: "RemoveTypeRelation".to_string(),
                             success: false,
+                            retryable: true,
                             error: Some(SearchIndexError::update(format!(
                                 "Remove type relation by ID failed: {}",
                                 error_body
@@ -571,6 +573,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: request.space_id.clone(),
                             operation_type: "Update".to_string(),
                             success: true,
+                            retryable: false,
                             error: None,
                         });
                     }
@@ -596,6 +599,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: request.space_id.clone(),
                             operation_type: "Unset".to_string(),
                             success: true,
+                            retryable: false,
                             error: None,
                         });
                         continue;
@@ -696,6 +700,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: String::new(),
                             operation_type: "UpdateEntityGlobalScore".to_string(),
                             success: true,
+                            retryable: false,
                             error: None,
                         });
                         debug!(
@@ -712,6 +717,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: String::new(),
                             operation_type: "UpdateEntityGlobalScore".to_string(),
                             success: false,
+                            retryable: true,
                             error: Some(SearchIndexError::update(format!(
                                 "Update entity global score failed: {}",
                                 error_body
@@ -768,6 +774,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: request.space_id.clone(),
                             operation_type: "UpdateSpaceScore".to_string(),
                             success: true,
+                            retryable: false,
                             error: None,
                         });
                         debug!(
@@ -784,6 +791,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                             space_id: request.space_id.clone(),
                             operation_type: "UpdateSpaceScore".to_string(),
                             success: false,
+                            retryable: true,
                             error: Some(SearchIndexError::update(format!(
                                 "Update space score failed: {}",
                                 error_body

@@ -19,6 +19,9 @@ use search_indexer_repository::{
     UpdateEntitySpaceScoreRequest, UpdateSpaceScoreRequest,
 };
 
+use crate::dlq::{DlqProducerLike, DlqRecord, DlqState};
+use chrono::Utc;
+
 /// Loader that indexes documents into the search engine.
 ///
 /// The loader is responsible for:
@@ -29,6 +32,19 @@ pub struct SearchLoader {
     provider: Arc<dyn SearchIndexProvider>,
     /// All pending operations, maintained in order for correct sequencing
     pending_operations: Vec<EntityOperation>,
+}
+
+/// DLQ components for the loader task.
+///
+/// Groups the producer, state manager, and config needed for DLQ routing.
+/// Passed as `Option<LoaderDlq>` to `run()` - `None` when DLQ is disabled.
+pub struct LoaderDlq {
+    /// DLQ producer (Kafka in production, test double in tests).
+    pub producer: Box<dyn DlqProducerLike>,
+    /// Poisoned entity state manager.
+    pub state: DlqState,
+    /// Maximum retry attempts for DLQ records.
+    pub max_retries: u32,
 }
 
 impl SearchLoader {
@@ -44,13 +60,18 @@ impl SearchLoader {
     ///
     /// Converts events to EntityOperations and processes them IN ORDER using bulk_operations.
     /// This maintains consistency when multiple operations affect the same entity.
+    ///
+    /// Returns `(summaries, operations)` where `operations` is the flat list of
+    /// `EntityOperation`s that were sent to `bulk_operations`. The results within
+    /// each summary are 1:1 with `operations` in the same order, so callers can
+    /// match a failed result to its original operation by index.
     #[instrument(skip(self, events), fields(event_count = events.len()))]
     pub async fn load(
         &mut self,
         events: Vec<ProcessedEvent>,
-    ) -> Result<Vec<search_indexer_repository::BatchOperationSummary>, IngestError> {
+    ) -> Result<(Vec<search_indexer_repository::BatchOperationSummary>, Vec<EntityOperation>), IngestError> {
         if events.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         // Convert events to EntityOperations, maintaining order
@@ -188,7 +209,7 @@ impl SearchLoader {
                         "Successfully completed all operations"
                     );
                 }
-                Ok(vec![summary])
+                Ok((vec![summary], operations))
             }
             Err(e) => {
                 error!(error = %e, count = count, "Failed bulk operations");
@@ -214,20 +235,38 @@ impl SearchLoader {
     /// and sends acknowledgments back to the appropriate consumer (entity or scores).
     /// Returns a tokio task handle.
     ///
+    /// When DLQ is enabled (`dlq` is `Some`):
+    /// - All events are processed normally through OpenSearch (no blocking)
+    /// - Partial failures: failed ops are sent to DLQ, entities are poisoned, batch is ACKed
+    /// - Successful ops on poisoned entities are logged at warn level with full details
+    /// - Total failures (e.g., OpenSearch down) still NACK the batch
+    ///
     /// # Arguments
     ///
     /// * `loader_rx` - Channel to receive processed batches from the processor
     /// * `entity_ack_tx` - Channel to send acknowledgments back to the entity consumer
     /// * `scores_ack_tx` - Channel to send acknowledgments back to the scores consumer
     /// * `metrics` - Metrics tracker
+    /// * `dlq` - Optional DLQ components (None when DLQ is disabled)
     pub fn run(
         mut self,
         mut loader_rx: mpsc::Receiver<ProcessedBatch>,
         entity_ack_tx: mpsc::Sender<StreamMessage>,
         scores_ack_tx: mpsc::Sender<StreamMessage>,
         metrics: Arc<SearchIndexerMetrics>,
+        dlq: Option<LoaderDlq>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
+            // Destructure DLQ components for use in the loop
+            let (dlq_producer, mut dlq_state, max_retries): (
+                Option<Box<dyn DlqProducerLike>>,
+                Option<DlqState>,
+                u32,
+            ) = match dlq {
+                Some(d) => (Some(d.producer), Some(d.state), d.max_retries),
+                None => (None, None, 0),
+            };
+
             while let Some(batch) = loader_rx.recv().await {
                 // Determine which ack channel to use based on batch type
                 let ack_tx = if batch.is_scores_batch {
@@ -235,26 +274,254 @@ impl SearchLoader {
                 } else {
                     &entity_ack_tx
                 };
+                let batch_type = if batch.is_scores_batch {
+                    "scores"
+                } else {
+                    "entities"
+                };
 
+                // Process ALL events through OpenSearch (no skipping for poisoned entities)
                 match self.load(batch.events).await {
-                    Ok(operation_summaries) => {
-                        // Check if any operation had failures
+                    Ok((operation_summaries, operations)) => {
                         let total_failed =
                             operation_summaries.iter().map(|s| s.failed).sum::<usize>();
-                        if total_failed > 0 {
-                            // At least one indexing operation failed, send NACK
+                        let total_succeeded =
+                            operation_summaries.iter().map(|s| s.succeeded).sum::<usize>();
+
+                        if total_failed > 0 && dlq_producer.is_some() && !batch.is_scores_batch {
+                            // DLQ enabled (entity batches only): route failures to DLQ, poison entities, ACK batch
+                            // Score batches bypass DLQ — scores are idempotent and recomputed
+                            // periodically, so NACK + Kafka retry is a better fit.
+
+                            // Check if any failure is retryable (infrastructure error).
+                            // If so, NACK the whole batch for redelivery instead of routing to DLQ.
+                            // Retryable errors (shard unavailable, disk pressure, etc.) will succeed
+                            // on redelivery; any permanent failures will re-fail and go to DLQ then.
+                            let has_retryable = operation_summaries.iter()
+                                .flat_map(|s| &s.results)
+                                .any(|r| !r.success && r.retryable);
+
+                            if has_retryable {
+                                for summary in &operation_summaries {
+                                    for result in summary.results.iter().filter(|r| !r.success) {
+                                        let error_msg = result
+                                            .error
+                                            .as_ref()
+                                            .map(|e| e.to_string())
+                                            .unwrap_or_else(|| "Unknown error".to_string());
+                                        error!(
+                                            entity_id = %result.entity_id,
+                                            space_id = %result.space_id,
+                                            operation_type = %result.operation_type,
+                                            error_message = %error_msg,
+                                            retryable = result.retryable,
+                                            source_batch_type = %batch_type,
+                                            "Operation failed (retryable infrastructure error) - NACKing batch"
+                                        );
+                                    }
+                                }
+                                if let Err(send_err) = ack_tx
+                                    .send(StreamMessage::Acknowledgment {
+                                        offsets: batch.offsets,
+                                        success: false,
+                                        error: Some(format!(
+                                            "Bulk operations completed with {} failures ({} retryable) - NACKing for redelivery",
+                                            total_failed, total_failed
+                                        )),
+                                    })
+                                    .await
+                                {
+                                    error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
+                                }
+                                continue;
+                            }
+
+                            let producer = dlq_producer.as_ref().unwrap();
+
+                            // Build a flat index into operations to match results 1:1
+                            let mut op_index = 0;
+                            for summary in &operation_summaries {
+                                for result in &summary.results {
+                                    if !result.success {
+                                        let error_msg = result
+                                            .error
+                                            .as_ref()
+                                            .map(|e| e.to_string())
+                                            .unwrap_or_else(|| "Unknown error".to_string());
+
+                                        let dlq_id = uuid::Uuid::new_v4().to_string();
+
+                                        // Log full details of every DLQ'd operation
+                                        error!(
+                                            dlq_id = %dlq_id,
+                                            entity_id = %result.entity_id,
+                                            space_id = %result.space_id,
+                                            operation_type = %result.operation_type,
+                                            error_message = %error_msg,
+                                            source_batch_type = %batch_type,
+                                            retry_count = 0,
+                                            max_retries = max_retries,
+                                            "Operation failed - routing to DLQ"
+                                        );
+
+                                        // Serialize the original operation for replay
+                                        let operation_payload = match operations.get(op_index) {
+                                            Some(op) => match serde_json::to_value(op) {
+                                                Ok(val) => val,
+                                                Err(e) => {
+                                                    error!(
+                                                        entity_id = %result.entity_id,
+                                                        space_id = %result.space_id,
+                                                        operation_type = %result.operation_type,
+                                                        error = %e,
+                                                        "Failed to serialize operation payload for DLQ record - record will be sent without payload"
+                                                    );
+                                                    serde_json::Value::Null
+                                                }
+                                            },
+                                            None => {
+                                                error!(
+                                                    entity_id = %result.entity_id,
+                                                    space_id = %result.space_id,
+                                                    op_index = op_index,
+                                                    operations_len = operations.len(),
+                                                    "Operation index out of bounds when building DLQ record - record will be sent without payload"
+                                                );
+                                                serde_json::Value::Null
+                                            }
+                                        };
+
+                                        // Send failed operation to DLQ
+                                        let record = DlqRecord {
+                                            dlq_id,
+                                            entity_id: result.entity_id.clone(),
+                                            space_id: result.space_id.clone(),
+                                            operation_type: result.operation_type.clone(),
+                                            error_message: error_msg.clone(),
+                                            source_batch_type: batch_type.to_string(),
+                                            source_topic: None,
+                                            source_partition: None,
+                                            source_offset: None,
+                                            failed_at: Utc::now(),
+                                            retry_count: 0,
+                                            max_retries,
+                                            operation_payload,
+                                        };
+                                        producer.send_best_effort(&record);
+                                        metrics
+                                            .total_dlq_events
+                                            .fetch_add(1, Ordering::Relaxed);
+
+                                        // Poison entity-scoped operations
+                                        if !result.entity_id.is_empty()
+                                            && !result.space_id.is_empty()
+                                        {
+                                            let entity_key = format!(
+                                                "{}_{}",
+                                                result.entity_id, result.space_id
+                                            );
+
+                                            if let Some(ref mut state) = dlq_state {
+                                                // Circuit breaker check
+                                                if state.would_exceed_limit(&entity_key) {
+                                                    error!(
+                                                        poisoned_count = state.poisoned_count(),
+                                                        entity_key = %entity_key,
+                                                        "Circuit breaker: max poisoned entities reached, shutting down loader"
+                                                    );
+                                                    let _ = ack_tx
+                                                        .send(StreamMessage::Acknowledgment {
+                                                            offsets: batch.offsets,
+                                                            success: false,
+                                                            error: Some(format!(
+                                                                "Circuit breaker: max poisoned entities ({}) reached",
+                                                                state.poisoned_count()
+                                                            )),
+                                                        })
+                                                        .await;
+                                                    return; // Exit loader task
+                                                }
+
+                                                let is_new =
+                                                    state.poison_entity(&entity_key);
+                                                if is_new {
+                                                    metrics
+                                                        .total_poisoned_entities
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                        }
+                                    } else if let Some(ref state) = dlq_state {
+                                        // Successful operation - log if entity is poisoned
+                                        if !result.entity_id.is_empty()
+                                            && !result.space_id.is_empty()
+                                        {
+                                            let entity_key = format!(
+                                                "{}_{}",
+                                                result.entity_id, result.space_id
+                                            );
+                                            if state.is_poisoned(&entity_key) {
+                                                error!(
+                                                    entity_id = %result.entity_id,
+                                                    space_id = %result.space_id,
+                                                    operation_type = %result.operation_type,
+                                                    entity_key = %entity_key,
+                                                    "Poisoned entity operation succeeded in OpenSearch \
+                                                     - logging for DLQ replay reconciliation"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    op_index += 1;
+                                }
+                            }
+
                             error!(
-                                offsets = ?batch.offsets,
-                                "Bulk operations completed with {} failures across {} operations",
-                                total_failed,
-                                operation_summaries.len()
+                                succeeded = total_succeeded,
+                                failed = total_failed,
+                                "Batch completed with partial failures - failed operations routed to DLQ"
                             );
+
+                            // ACK the batch - failures are in the DLQ
+                            if let Err(send_err) = ack_tx
+                                .send(StreamMessage::Acknowledgment {
+                                    offsets: batch.offsets,
+                                    success: true,
+                                    error: None,
+                                })
+                                .await
+                            {
+                                error!(error = %send_err, "Failed to send acknowledgment - channel closed");
+                            }
+
+                            metrics
+                                .total_documents_indexed
+                                .fetch_add(total_succeeded as u64, Ordering::Relaxed);
+                        } else if total_failed > 0 {
+                            // DLQ not available: log all failed operations and NACK
+                            for summary in &operation_summaries {
+                                for result in summary.results.iter().filter(|r| !r.success) {
+                                    let error_msg = result
+                                        .error
+                                        .as_ref()
+                                        .map(|e| e.to_string())
+                                        .unwrap_or_else(|| "Unknown error".to_string());
+                                    error!(
+                                        entity_id = %result.entity_id,
+                                        space_id = %result.space_id,
+                                        operation_type = %result.operation_type,
+                                        error_message = %error_msg,
+                                        source_batch_type = %batch_type,
+                                        "Operation failed (DLQ unavailable) - NACKing batch"
+                                    );
+                                }
+                            }
                             if let Err(send_err) = ack_tx
                                 .send(StreamMessage::Acknowledgment {
                                     offsets: batch.offsets,
                                     success: false,
                                     error: Some(format!(
-                                        "Bulk operations completed with {} failures",
+                                        "Bulk operations completed with {} failures (DLQ unavailable)",
                                         total_failed
                                     )),
                                 })
@@ -263,7 +530,33 @@ impl SearchLoader {
                                 error!(error = %send_err, "Failed to send failure acknowledgment - channel closed");
                             }
                         } else {
-                            // All operations successful, send ACK
+                            // All operations successful
+                            // Log any operations on poisoned entities for observability
+                            if let Some(ref state) = dlq_state {
+                                for summary in &operation_summaries {
+                                    for result in &summary.results {
+                                        if !result.entity_id.is_empty()
+                                            && !result.space_id.is_empty()
+                                        {
+                                            let entity_key = format!(
+                                                "{}_{}",
+                                                result.entity_id, result.space_id
+                                            );
+                                            if state.is_poisoned(&entity_key) {
+                                                error!(
+                                                    entity_id = %result.entity_id,
+                                                    space_id = %result.space_id,
+                                                    operation_type = %result.operation_type,
+                                                    entity_key = %entity_key,
+                                                    "Poisoned entity operation succeeded in OpenSearch \
+                                                     - logging for DLQ replay reconciliation"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if let Err(send_err) = ack_tx
                                 .send(StreamMessage::Acknowledgment {
                                     offsets: batch.offsets,
@@ -275,13 +568,13 @@ impl SearchLoader {
                                 error!(error = %send_err, "Failed to send success acknowledgment - channel closed");
                             }
 
-                            // Update metrics
                             metrics
                                 .total_documents_indexed
-                                .fetch_add(batch.index_count as u64, Ordering::Relaxed);
+                                .fetch_add(total_succeeded as u64, Ordering::Relaxed);
                         }
                     }
                     Err(e) => {
+                        // Total failure (e.g., OpenSearch down) - NACK regardless of DLQ
                         error!(error = %e, "Failed to load batch");
                         if let Err(send_err) = ack_tx
                             .send(StreamMessage::Acknowledgment {
@@ -296,6 +589,14 @@ impl SearchLoader {
                     }
                 }
             }
+
+            // Flush DLQ producer before shutdown
+            if let Some(ref producer) = dlq_producer {
+                if let Err(e) = producer.flush() {
+                    error!(error = %e, "Failed to flush DLQ producer on shutdown");
+                }
+            }
+
             debug!("Loader task shutting down");
         })
     }
@@ -436,6 +737,7 @@ mod tests {
                     space_id: op.space_id().to_string(),
                     operation_type: op.operation_type().to_string(),
                     success: true,
+                    retryable: false,
                     error: None,
                 })
                 .collect();
@@ -603,8 +905,9 @@ mod tests {
         let mut loader = SearchLoader::new(provider.clone());
 
         // Load empty events should succeed
-        let summaries = loader.load(vec![]).await.unwrap();
+        let (summaries, operations) = loader.load(vec![]).await.unwrap();
         assert_eq!(summaries.len(), 0);
+        assert_eq!(operations.len(), 0);
         assert_eq!(provider.get_operation_count(), 0);
     }
 

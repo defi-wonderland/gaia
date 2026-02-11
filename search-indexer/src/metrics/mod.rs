@@ -12,6 +12,10 @@ pub struct SearchIndexerMetrics {
     pub total_events_processed: Arc<AtomicU64>,
     /// Total number of documents indexed since startup.
     pub total_documents_indexed: Arc<AtomicU64>,
+    /// Total number of events sent to the DLQ since startup.
+    pub total_dlq_events: Arc<AtomicU64>,
+    /// Current number of poisoned entities.
+    pub total_poisoned_entities: Arc<AtomicU64>,
 }
 
 impl SearchIndexerMetrics {
@@ -20,6 +24,8 @@ impl SearchIndexerMetrics {
         Self {
             total_events_processed: Arc::new(AtomicU64::new(0)),
             total_documents_indexed: Arc::new(AtomicU64::new(0)),
+            total_dlq_events: Arc::new(AtomicU64::new(0)),
+            total_poisoned_entities: Arc::new(AtomicU64::new(0)),
         }
     }
 }

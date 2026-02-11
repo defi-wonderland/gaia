@@ -474,6 +474,7 @@ mod tests {
                     space_id: op.space_id().to_string(),
                     operation_type: op.operation_type().to_string(),
                     success: true,
+                    retryable: false,
                     error: None,
                 })
                 .collect();

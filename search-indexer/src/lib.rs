@@ -24,6 +24,7 @@
 
 pub mod config;
 pub mod consumer;
+pub mod dlq;
 pub mod errors;
 pub mod health;
 pub mod loader;

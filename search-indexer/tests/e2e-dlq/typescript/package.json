@@ -1,0 +1,18 @@
+{
+  "name": "e2e-dlq-validation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Validation scripts for E2E DLQ test scenarios",
+  "type": "module",
+  "scripts": {
+    "validate": "tsx validate-dlq.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

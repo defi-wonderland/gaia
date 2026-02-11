@@ -5860,6 +5860,7 @@ dependencies = [
  "sdk",
  "search-indexer-repository",
  "search-indexer-shared",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",

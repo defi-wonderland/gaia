@@ -24,6 +24,10 @@ pub enum IngestError {
     /// Error from the orchestrator component.
     #[error("Orchestrator error: {0}")]
     OrchestratorError(String),
+
+    /// DLQ-related error.
+    #[error("DLQ error: {0}")]
+    DlqError(String),
 }
 
 impl IngestError {
@@ -40,6 +44,11 @@ impl IngestError {
     /// Create a parse error.
     pub fn parse(msg: impl Into<String>) -> Self {
         Self::ParseError(msg.into())
+    }
+
+    /// Create a DLQ error.
+    pub fn dlq(msg: impl Into<String>) -> Self {
+        Self::DlqError(msg.into())
     }
 }
 

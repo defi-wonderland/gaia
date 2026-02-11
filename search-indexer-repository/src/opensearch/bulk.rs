@@ -143,14 +143,14 @@ pub fn parse_bulk_response(
     for (i, meta) in metas.iter().enumerate() {
         let item_result = items.get(i).and_then(|item| item.get(action_str));
 
-        let (success, error) = if let Some(result) = item_result {
+        let (success, error, retryable) = if let Some(result) = item_result {
             let status = result.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
             // 404 on delete is OK (document not found means it's already deleted)
             let is_success = (200..300).contains(&(status as u16))
                 || status == 404 && action == BulkAction::Delete;
 
             if is_success {
-                (true, None)
+                (true, None, false)
             } else {
                 let error_msg = result
                     .get("error")
@@ -163,7 +163,12 @@ pub fn parse_bulk_response(
                     .unwrap_or_else(|| {
                         format!("Bulk {} failed with status {}", action_str, status)
                     });
-                (false, Some(SearchIndexError::bulk_index(error_msg)))
+                // Infrastructure errors are retryable (shard unavailable, disk pressure, etc.)
+                // 403 = cluster block / read-only index
+                // 429 = circuit breaker / too many requests
+                // 500+ = server errors / shard unavailable
+                let is_retryable = status == 403 || status == 429 || status >= 500;
+                (false, Some(SearchIndexError::bulk_index(error_msg)), is_retryable)
             }
         } else {
             // No result found for this index - this shouldn't happen
@@ -173,6 +178,7 @@ pub fn parse_bulk_response(
                     "No result found for operation at index {}",
                     i
                 ))),
+                false,
             )
         };
 
@@ -187,6 +193,7 @@ pub fn parse_bulk_response(
             space_id: meta.space_id.clone(),
             operation_type: meta.operation_type.clone(),
             success,
+            retryable,
             error,
         });
     }

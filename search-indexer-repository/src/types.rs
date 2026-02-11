@@ -1,12 +1,13 @@
 //! Request and response types for search index operations.
 
 use crate::errors::SearchIndexError;
+use serde::{Deserialize, Serialize};
 
 /// Data for a type relation to be added to an entity document.
 ///
 /// This struct contains all the information needed to add a type relation entry
 /// to an entity's `type_relations` array.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeRelationData {
     /// The relation's unique identifier.
     pub relation_id: String,
@@ -19,7 +20,7 @@ pub struct TypeRelationData {
 /// This struct allows partial updates to an entity document. The `entity_id` and
 /// `space_id` are required to identify the document. Only fields that are `Some`
 /// will be updated; fields that are `None` will remain unchanged in the index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateEntityRequest {
     /// The entity's unique identifier.
     pub entity_id: String,
@@ -50,7 +51,7 @@ pub struct UpdateEntityRequest {
 ///
 /// This struct identifies the document to delete using `entity_id` and `space_id`.
 /// Both fields are required and must be valid UUIDs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteEntityRequest {
     /// The entity's unique identifier.
     pub entity_id: String,
@@ -65,7 +66,7 @@ pub struct DeleteEntityRequest {
 /// contains the names of the fields to remove (e.g., "name", "description", "avatar", "cover").
 ///
 /// Note: To remove type relations, use `EntityOperation::RemoveTypeRelationById` instead.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnsetEntityPropertiesRequest {
     /// The entity's unique identifier.
     pub entity_id: String,
@@ -76,7 +77,7 @@ pub struct UnsetEntityPropertiesRequest {
 }
 
 /// Data for removing a type relation from an entity document by relation_id.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RemoveTypeRelationData {
     /// The relation's unique identifier to remove.
     pub relation_id: String,
@@ -86,7 +87,7 @@ pub struct RemoveTypeRelationData {
 ///
 /// This will update the `entity_global_score` field for ALL documents
 /// that have the given entity_id (one update per space the entity exists in).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateEntityGlobalScoreRequest {
     /// The entity's unique identifier.
     pub entity_id: String,
@@ -98,7 +99,7 @@ pub struct UpdateEntityGlobalScoreRequest {
 ///
 /// This will update the `space_score` field for ALL documents
 /// that have the given space_id.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSpaceScoreRequest {
     /// The space's unique identifier.
     pub space_id: String,
@@ -110,7 +111,7 @@ pub struct UpdateSpaceScoreRequest {
 ///
 /// This is the most targeted score update - affects exactly one document
 /// identified by the entity_id + space_id combination.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateEntitySpaceScoreRequest {
     /// The entity's unique identifier.
     pub entity_id: String,
@@ -124,7 +125,7 @@ pub struct UpdateEntitySpaceScoreRequest {
 ///
 /// This enum represents any operation that can be performed on an entity document.
 /// Operations are processed in order, maintaining consistency for operations on the same entity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EntityOperation {
     /// Update/upsert an entity document.
     Update(UpdateEntityRequest),
@@ -205,6 +206,9 @@ pub struct BatchOperationResult {
     pub operation_type: String,
     /// Whether the operation succeeded.
     pub success: bool,
+    /// Whether this failure is retryable (infrastructure error like shard unavailable or disk pressure).
+    /// When true, the batch should be NACKed rather than routing to DLQ.
+    pub retryable: bool,
     /// Error if the operation failed.
     pub error: Option<SearchIndexError>,
 }

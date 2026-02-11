@@ -14,7 +14,7 @@ use tokio::signal::unix::{signal, SignalKind};
 
 use crate::consumer::{EntitiesConsumer, EntityEvent, ScoresConsumer, StreamMessage};
 use crate::errors::IngestError;
-use crate::loader::SearchLoader;
+use crate::loader::{LoaderDlq, SearchLoader};
 use crate::metrics::SearchIndexerMetrics;
 use crate::processor::{ProcessedEvent, Processor};
 
@@ -133,6 +133,7 @@ pub struct Orchestrator {
     config: OrchestratorConfig,
     shutdown_tx: broadcast::Sender<()>,
     metrics: Arc<SearchIndexerMetrics>,
+    dlq: Option<LoaderDlq>,
 }
 
 impl Orchestrator {
@@ -142,6 +143,7 @@ impl Orchestrator {
         scores_consumer: Arc<dyn ScoresConsumerTrait>,
         processor: Processor,
         loader: SearchLoader,
+        dlq: Option<LoaderDlq>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -153,6 +155,7 @@ impl Orchestrator {
             config: OrchestratorConfig::default(),
             shutdown_tx,
             metrics: Arc::new(SearchIndexerMetrics::new()),
+            dlq,
         }
     }
 
@@ -163,6 +166,7 @@ impl Orchestrator {
         processor: Processor,
         loader: SearchLoader,
         config: OrchestratorConfig,
+        dlq: Option<LoaderDlq>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -174,6 +178,7 @@ impl Orchestrator {
             config,
             shutdown_tx,
             metrics: Arc::new(SearchIndexerMetrics::new()),
+            dlq,
         }
     }
 
@@ -193,6 +198,7 @@ impl Orchestrator {
         let config = self.config;
         let shutdown_tx = self.shutdown_tx;
         let metrics = self.metrics;
+        let dlq = self.dlq;
 
         // Check if loader is ready
         loader.check_ready().await?;
@@ -276,6 +282,7 @@ impl Orchestrator {
             entities_ack_tx_for_loader,
             scores_ack_tx_for_loader,
             Arc::clone(&metrics),
+            dlq,
         );
 
         // Orchestrator now just monitors for shutdown and metrics
@@ -286,6 +293,8 @@ impl Orchestrator {
         let metrics_ref = Arc::clone(&metrics);
         let total_events = Arc::clone(&metrics_ref.total_events_processed);
         let total_docs = Arc::clone(&metrics_ref.total_documents_indexed);
+        let total_dlq = Arc::clone(&metrics_ref.total_dlq_events);
+        let total_poisoned = Arc::clone(&metrics_ref.total_poisoned_entities);
         let mut progress_timer = interval(Duration::from_secs(10));
         progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -363,11 +372,16 @@ impl Orchestrator {
                         0.0
                     };
 
+                    let dlq_events = total_dlq.load(Ordering::Relaxed);
+                    let poisoned = total_poisoned.load(Ordering::Relaxed);
+
                     info!(
                         events_processed = events,
                         documents_indexed = docs,
                         events_per_sec = format!("{:.2}", events_per_sec),
                         documents_per_sec = format!("{:.2}", docs_per_sec),
+                        dlq_events = dlq_events,
+                        poisoned_entities = poisoned,
                         "Processing progress"
                     );
 
@@ -414,9 +428,13 @@ impl Orchestrator {
 
         let final_events = metrics.total_events_processed.load(Ordering::Relaxed);
         let final_docs = metrics.total_documents_indexed.load(Ordering::Relaxed);
+        let final_dlq = metrics.total_dlq_events.load(Ordering::Relaxed);
+        let final_poisoned = metrics.total_poisoned_entities.load(Ordering::Relaxed);
         info!(
             total_events_processed = final_events,
             total_documents_indexed = final_docs,
+            total_dlq_events = final_dlq,
+            total_poisoned_entities = final_poisoned,
             "Orchestrator shutdown complete"
         );
 

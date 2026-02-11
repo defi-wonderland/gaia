@@ -12,7 +12,8 @@ use rdkafka::client::DefaultClientContext;
 
 use crate::consumer::kafka_config::create_client_config;
 use crate::consumer::{EntitiesConsumer, ScoresConsumer};
-use crate::loader::SearchLoader;
+use crate::dlq::{DlqConfig, DlqProducer, DlqState};
+use crate::loader::{LoaderDlq, SearchLoader};
 use crate::orchestrator::{Orchestrator, OrchestratorConfig};
 use crate::processor::Processor;
 use crate::IndexingError;
@@ -191,6 +192,43 @@ impl Dependencies {
 
         info!("Scores consumer created");
 
+        // Initialize DLQ components
+        let topic_prefix = get_consumer_group_prefix();
+        let dlq_config = DlqConfig::from_env(&topic_prefix);
+        let loader_dlq = if dlq_config.enabled {
+            info!(
+                dlq_topic = %dlq_config.topic,
+                max_retries = dlq_config.max_retries,
+                max_poisoned_entities = dlq_config.max_poisoned_entities,
+                "DLQ enabled, initializing components"
+            );
+
+            let dlq_producer = DlqProducer::new(&kafka_broker, dlq_config.topic.clone())
+                .map_err(|e| IndexingError::config(format!("Failed to create DLQ producer: {}", e)))?;
+
+            let dlq_state = DlqState::new(
+                &kafka_broker,
+                &dlq_config.topic,
+                dlq_config.max_poisoned_entities,
+            )
+            .await
+            .map_err(|e| IndexingError::config(format!("Failed to initialize DLQ state: {}", e)))?;
+
+            info!(
+                poisoned_count = dlq_state.poisoned_count(),
+                "DLQ state initialized"
+            );
+
+            Some(LoaderDlq {
+                producer: Box::new(dlq_producer),
+                state: dlq_state,
+                max_retries: dlq_config.max_retries,
+            })
+        } else {
+            info!("DLQ disabled");
+            None
+        };
+
         let orchestrator_config = OrchestratorConfig::from_env();
         info!(
             channel_buffer_size = orchestrator_config.channel_buffer_size,
@@ -202,6 +240,7 @@ impl Dependencies {
             processor,
             loader,
             orchestrator_config,
+            loader_dlq,
         );
 
         Ok(Self {

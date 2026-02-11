@@ -215,6 +215,7 @@ impl SearchIndexProvider for MockSearchProvider {
                 space_id,
                 operation_type: op.operation_type().to_string(),
                 success: true,
+                retryable: false,
                 error: None,
             });
         }
@@ -251,6 +252,7 @@ fn create_scores_test_orchestrator(
         mock_scores_consumer.clone(),
         processor,
         loader,
+        None,
     );
 
     (orchestrator, mock_provider, mock_scores_consumer)
