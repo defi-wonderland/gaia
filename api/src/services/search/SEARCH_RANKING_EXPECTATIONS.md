@@ -1,6 +1,8 @@
-# Search Ranking Test Cases
+# Search Ranking Expectations
 
 Manual test cases to verify that core Geo entities and types surface at the top of search results.
+
+Root space ID: `d24e4d323f4eb6cc4eaa757cdd653857`
 
 ---
 
