@@ -8,6 +8,10 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
+_peak_usage: float = 0.0
+_peak_lock = threading.Lock()
+_memory_limit: int | None = None
+
 
 def _read_cgroup_memory_limit() -> int | None:
     """Read the container memory limit from cgroup filesystem.
@@ -35,6 +39,14 @@ def _read_cgroup_memory_limit() -> int | None:
     return None
 
 
+def get_peak_memory_usage() -> tuple[float, int] | None:
+    """Return (peak_ratio, limit_bytes), or None if no cgroup limit."""
+    if _memory_limit is None:
+        return None
+    with _peak_lock:
+        return _peak_usage, _memory_limit
+
+
 def start_memory_monitor(threshold: float = 0.85, interval: float = 5.0) -> None:
     """Start a daemon thread that monitors memory usage.
 
@@ -46,10 +58,13 @@ def start_memory_monitor(threshold: float = 0.85, interval: float = 5.0) -> None
         threshold: Memory usage ratio (0.0-1.0) to trigger alert.
         interval: Seconds between checks.
     """
-    limit = _read_cgroup_memory_limit()
-    if limit is None:
+    global _memory_limit
+    _memory_limit = _read_cgroup_memory_limit()
+    if _memory_limit is None:
         logger.info("Memory monitor: no cgroup limit detected, skipping")
         return
+
+    limit = _memory_limit
 
     logger.info(
         "Memory monitor: started (limit=%dMB, threshold=%.0f%%, interval=%.0fs)",
@@ -59,12 +74,17 @@ def start_memory_monitor(threshold: float = 0.85, interval: float = 5.0) -> None
     )
 
     def _monitor() -> None:
+        global _peak_usage
         process = psutil.Process()
         alerted = False
 
         while True:
             rss = process.memory_info().rss
             usage = rss / limit
+
+            with _peak_lock:
+                if usage > _peak_usage:
+                    _peak_usage = usage
 
             if usage > threshold and not alerted:
                 msg = (

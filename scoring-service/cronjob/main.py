@@ -12,7 +12,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 
 from src.algorithm.models import RankingConfig
 from src.algorithm.scoring import RankingEngine
-from src.memory_monitor import start_memory_monitor
+from src.memory_monitor import get_peak_memory_usage, start_memory_monitor
 from src.scoring_data_emitter import ScoringDataEmitter
 from src.scoring_data_provider import ScoringDataProvider
 from src.scoring_data_provider.scoring_data_provider import ScoringData
@@ -323,6 +323,17 @@ def main() -> None:
             score_batch_size=score_batch_size,
         )
         entity_count, space_count = pipeline.run()
+
+        peak = get_peak_memory_usage()
+        if peak is not None:
+            peak_ratio, limit_bytes = peak
+            limit_mb = limit_bytes // 1024 // 1024
+            logger.info(
+                "Peak memory usage: %.1f%% (limit=%dMB)",
+                peak_ratio * 100,
+                limit_mb,
+                extra={"peak_memory_pct": round(peak_ratio * 100, 1), "memory_limit_mb": limit_mb},
+            )
 
         # Add success context to Sentry
         sentry_sdk.set_tag("pipeline.status", "success")

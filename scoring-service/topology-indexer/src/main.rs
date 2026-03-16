@@ -88,6 +88,19 @@ async fn async_main() -> Result<(), IndexerError> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
 
+    let kafka_sasl = env::var("KAFKA_USERNAME").is_ok();
+    let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
+
+    info!(
+        environment = %environment,
+        kafka_broker = %kafka_broker,
+        kafka_group_id = %kafka_group_id,
+        kafka_sasl = kafka_sasl,
+        batch_size = batch_size,
+        batch_timeout_ms = batch_timeout_ms,
+        "Configuration loaded"
+    );
+
     // Initialize storage
     let storage = Storage::connect(&database_url).await?;
     info!("Connected to database");
