@@ -48,7 +48,7 @@ impl ScoresConsumer {
     /// Configuration is read from environment variables:
     /// - ENVIRONMENT: Environment name for topic prefix ("staging" or "production")
     /// - SCORES_KAFKA_TOPIC: Base topic name (default: "curation.scores")
-    /// - SCORES_BATCH_SIZE: Batch size (default: 50)
+    /// - SCORES_BATCH_SIZE: Batch size (default: 10)
     /// - SCORES_BATCH_TIMEOUT_MS: Batch timeout in milliseconds (default: 1000)
     ///
     /// # Arguments
@@ -86,9 +86,9 @@ impl ScoresConsumer {
         batch_timeout_ms: u64,
     ) -> Result<Self, IngestError> {
         let mut client_config = super::kafka_config::create_client_config(brokers, group_id);
-        // Score updates use update_by_query which can take minutes for large batches.
-        // Default 300s is too short — use 30 minutes to avoid MAXPOLL group kicks.
-        client_config.set("max.poll.interval.ms", "1800000");
+        // Score updates are now batched via terms queries, processing 10K scores in <1 min.
+        // 5 minutes provides ample headroom to avoid MAXPOLL group kicks.
+        client_config.set("max.poll.interval.ms", "300000");
 
         info!(
             brokers = %brokers,

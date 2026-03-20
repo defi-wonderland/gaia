@@ -127,6 +127,15 @@ enum UpdateByQueryOutcome {
     Failed(String),
 }
 
+/// Aggregated outcome of batched score updates across multiple chunks.
+struct BatchedScoreOutcome {
+    succeeded: usize,
+    failed: usize,
+    wall_ms: u64,
+    took_ms: u64,
+    results: Vec<BatchOperationResult>,
+}
+
 /// OpenSearch provider implementation.
 ///
 /// Provides full-text search capabilities using OpenSearch as the backend.
@@ -289,6 +298,105 @@ impl OpenSearchProvider {
             );
             return Ok(UpdateByQueryOutcome::Failed(error_body));
         }
+    }
+
+    /// Execute batched score updates using chunked `terms` queries with Painless map lookups.
+    ///
+    /// Instead of one `update_by_query` per entity/space, this collects all scores into a
+    /// single `terms` query per chunk, using a Painless script that looks up the score from
+    /// a params map. This reduces N individual calls to ceil(N / chunk_size) calls.
+    async fn execute_batched_score_updates(
+        &self,
+        scores: HashMap<String, f64>,
+        field_name: &str,
+        query_field: &str,
+        operation_type: &str,
+    ) -> Result<BatchedScoreOutcome, SearchIndexError> {
+        let chunk_size = opensearch_max_bulk_size();
+        let mut outcome = BatchedScoreOutcome {
+            succeeded: 0,
+            failed: 0,
+            wall_ms: 0,
+            took_ms: 0,
+            results: Vec::with_capacity(scores.len()),
+        };
+
+        let entries: Vec<(String, f64)> = scores.into_iter().collect();
+
+        for chunk in entries.chunks(chunk_size) {
+            let ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
+            let scores_map: serde_json::Map<String, Value> = chunk
+                .iter()
+                .map(|(id, score)| (id.clone(), json!(score)))
+                .collect();
+
+            let script_source = format!(
+                "ctx._source.{} = params.scores[ctx._source.{}]",
+                field_name, query_field
+            );
+
+            let body = json!({
+                "query": {
+                    "terms": {
+                        query_field: ids
+                    }
+                },
+                "script": {
+                    "source": script_source,
+                    "lang": "painless",
+                    "params": {
+                        "scores": scores_map
+                    }
+                }
+            });
+
+            let chunk_ids: Vec<String> = chunk.iter().map(|(id, _)| id.clone()).collect();
+
+            match self.update_by_query_with_retry(body, operation_type).await? {
+                UpdateByQueryOutcome::Success { took_ms, wall_ms, .. } => {
+                    outcome.succeeded += chunk_ids.len();
+                    outcome.wall_ms += wall_ms;
+                    outcome.took_ms += took_ms;
+                    for id in &chunk_ids {
+                        let (entity_id, space_id) = if query_field == "entity_id" {
+                            (id.clone(), String::new())
+                        } else {
+                            (String::new(), id.clone())
+                        };
+                        outcome.results.push(BatchOperationResult {
+                            entity_id,
+                            space_id,
+                            operation_type: operation_type.to_string(),
+                            success: true,
+                            error: None,
+                        });
+                    }
+                }
+                UpdateByQueryOutcome::Failed(error_body) => {
+                    outcome.failed += chunk_ids.len();
+                    let error = SearchIndexError::update(format!(
+                        "Batched {} failed: {}",
+                        operation_type, error_body
+                    ));
+                    for id in &chunk_ids {
+                        let (entity_id, space_id) = if query_field == "entity_id" {
+                            (id.clone(), String::new())
+                        } else {
+                            (String::new(), id.clone())
+                        };
+                        outcome.results.push(BatchOperationResult {
+                            entity_id,
+                            space_id,
+                            operation_type: operation_type.to_string(),
+                            success: false,
+                            error: Some(SearchIndexError::update(error.to_string())),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(outcome)
     }
 
     /// Build a document map from an UpdateEntityRequest with only the provided fields.
@@ -718,6 +826,10 @@ impl SearchIndexProvider for OpenSearchProvider {
         let mut bulk_ops: Vec<BulkOperation<Value>> = Vec::new();
         let mut metas: Vec<BulkOperationMeta> = Vec::new();
 
+        // Collect score updates for batched execution after the main loop
+        let mut pending_entity_global_scores: HashMap<String, f64> = HashMap::new();
+        let mut pending_space_scores: HashMap<String, f64> = HashMap::new();
+
         for op in operations {
             match op {
                 EntityOperation::RemoveRelationById(request) => {
@@ -995,134 +1107,22 @@ impl SearchIndexProvider for OpenSearchProvider {
                     );
                 }
                 EntityOperation::UpdateEntityGlobalScore(request) => {
-                    // Flush before executing the update_by_query to maintain ordering
-                    flush_pending_bulk!(
-                        self,
-                        bulk_ops,
-                        metas,
-                        total_succeeded,
-                        total_failed,
-                        all_results,
-                        total_wall_ms,
-                        total_took_ms,
-                        _bulk_call_count
-                    );
-
                     let entity_uuid = uuid::Uuid::parse_str(&request.entity_id).map_err(|_| {
                         SearchIndexError::validation(format!(
                             "Invalid entity_id: {}",
                             request.entity_id
                         ))
                     })?;
-
-                    let body = json!({
-                        "query": {
-                            "term": {
-                                "entity_id": entity_uuid.to_string()
-                            }
-                        },
-                        "script": {
-                            "source": "ctx._source.entity_global_score = params.score",
-                            "lang": "painless",
-                            "params": {
-                                "score": request.score
-                            }
-                        }
-                    });
-
-                    match self.update_by_query_with_retry(body, "UpdateEntityGlobalScore").await? {
-                        UpdateByQueryOutcome::Success { took_ms, wall_ms, .. } => {
-                            total_succeeded += 1;
-                            total_wall_ms += wall_ms;
-                            total_took_ms += took_ms;
-                            _bulk_call_count += 1;
-                            all_results.push(BatchOperationResult {
-                                entity_id: request.entity_id.clone(),
-                                space_id: String::new(),
-                                operation_type: "UpdateEntityGlobalScore".to_string(),
-                                success: true,
-                                error: None,
-                            });
-                        }
-                        UpdateByQueryOutcome::Failed(error_body) => {
-                            total_failed += 1;
-                            all_results.push(BatchOperationResult {
-                                entity_id: request.entity_id.clone(),
-                                space_id: String::new(),
-                                operation_type: "UpdateEntityGlobalScore".to_string(),
-                                success: false,
-                                error: Some(SearchIndexError::update(format!(
-                                    "Update entity global score failed: {}",
-                                    error_body
-                                ))),
-                            });
-                        }
-                    }
+                    pending_entity_global_scores.insert(entity_uuid.to_string(), request.score);
                 }
                 EntityOperation::UpdateSpaceScore(request) => {
-                    // Flush before executing the update_by_query to maintain ordering
-                    flush_pending_bulk!(
-                        self,
-                        bulk_ops,
-                        metas,
-                        total_succeeded,
-                        total_failed,
-                        all_results,
-                        total_wall_ms,
-                        total_took_ms,
-                        _bulk_call_count
-                    );
-
                     let space_uuid = uuid::Uuid::parse_str(&request.space_id).map_err(|_| {
                         SearchIndexError::validation(format!(
                             "Invalid space_id: {}",
                             request.space_id
                         ))
                     })?;
-
-                    let body = json!({
-                        "query": {
-                            "term": {
-                                "space_id": space_uuid.to_string()
-                            }
-                        },
-                        "script": {
-                            "source": "ctx._source.space_score = params.score",
-                            "lang": "painless",
-                            "params": {
-                                "score": request.score
-                            }
-                        }
-                    });
-
-                    match self.update_by_query_with_retry(body, "UpdateSpaceScore").await? {
-                        UpdateByQueryOutcome::Success { took_ms, wall_ms, .. } => {
-                            total_succeeded += 1;
-                            total_wall_ms += wall_ms;
-                            total_took_ms += took_ms;
-                            _bulk_call_count += 1;
-                            all_results.push(BatchOperationResult {
-                                entity_id: String::new(),
-                                space_id: request.space_id.clone(),
-                                operation_type: "UpdateSpaceScore".to_string(),
-                                success: true,
-                                error: None,
-                            });
-                        }
-                        UpdateByQueryOutcome::Failed(error_body) => {
-                            total_failed += 1;
-                            all_results.push(BatchOperationResult {
-                                entity_id: String::new(),
-                                space_id: request.space_id.clone(),
-                                operation_type: "UpdateSpaceScore".to_string(),
-                                success: false,
-                                error: Some(SearchIndexError::update(format!(
-                                    "Update space score failed: {}",
-                                    error_body
-                                ))),
-                            });
-                        }
-                    }
+                    pending_space_scores.insert(space_uuid.to_string(), request.score);
                 }
                 EntityOperation::UpdateEntitySpaceScore(request) => {
                     // This is a targeted update for a specific document, can be batched
@@ -1288,6 +1288,8 @@ impl SearchIndexProvider for OpenSearchProvider {
         }
 
         // Flush any remaining bulk operations
+        let has_pending_scores =
+            !pending_entity_global_scores.is_empty() || !pending_space_scores.is_empty();
         if !bulk_ops.is_empty() {
             let summary = execute_bulk(
                 &self.client,
@@ -1295,7 +1297,7 @@ impl SearchIndexProvider for OpenSearchProvider {
                 bulk_ops,
                 &metas,
                 BulkAction::Update,
-                false, // no need to refresh for final batch
+                has_pending_scores, // refresh if score updates follow
                 &self.retry_config,
             )
             .await?;
@@ -1305,6 +1307,54 @@ impl SearchIndexProvider for OpenSearchProvider {
             total_took_ms += summary.took_ms;
             _bulk_call_count += 1;
             all_results.extend(summary.results);
+        } else if has_pending_scores {
+            // No pending bulk ops, but we need a refresh so update_by_query sees all prior writes
+            debug!("No pending bulk ops; issuing explicit index refresh before batched score updates");
+            self.client
+                .indices()
+                .refresh(opensearch::indices::IndicesRefreshParts::Index(&[&self
+                    .index_config
+                    .alias]))
+                .send()
+                .await
+                .map_err(|e| SearchIndexError::update(e.to_string()))?;
+        }
+
+        // Execute batched score updates after all other operations
+        if !pending_entity_global_scores.is_empty() {
+            let count = pending_entity_global_scores.len();
+            info!(count, "Executing batched entity global score updates");
+            let outcome = self
+                .execute_batched_score_updates(
+                    pending_entity_global_scores,
+                    "entity_global_score",
+                    "entity_id",
+                    "UpdateEntityGlobalScore",
+                )
+                .await?;
+            total_succeeded += outcome.succeeded;
+            total_failed += outcome.failed;
+            total_wall_ms += outcome.wall_ms;
+            total_took_ms += outcome.took_ms;
+            all_results.extend(outcome.results);
+        }
+
+        if !pending_space_scores.is_empty() {
+            let count = pending_space_scores.len();
+            info!(count, "Executing batched space score updates");
+            let outcome = self
+                .execute_batched_score_updates(
+                    pending_space_scores,
+                    "space_score",
+                    "space_id",
+                    "UpdateSpaceScore",
+                )
+                .await?;
+            total_succeeded += outcome.succeeded;
+            total_failed += outcome.failed;
+            total_wall_ms += outcome.wall_ms;
+            total_took_ms += outcome.took_ms;
+            all_results.extend(outcome.results);
         }
 
         Ok(BatchOperationSummary {
@@ -1422,5 +1472,36 @@ mod tests {
         // add_relation should NOT be in the doc - it's handled separately
         assert!(doc.get("add_relation").is_none());
         assert!(doc.get("relations").is_none());
+    }
+
+    #[test]
+    fn test_pending_scores_hashmap_dedup_keeps_last_value() {
+        // Simulates what happens when the same entity_id appears multiple times
+        // in one batch — the HashMap keeps the last inserted value.
+        let mut pending: HashMap<String, f64> = HashMap::new();
+        let id = "550e8400-e29b-41d4-a716-446655440000".to_string();
+
+        pending.insert(id.clone(), 0.5);
+        pending.insert(id.clone(), 0.8);
+        pending.insert(id.clone(), 0.95);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[&id], 0.95);
+    }
+
+    #[test]
+    fn test_pending_scores_chunking_math() {
+        // Verifies that entries.chunks(chunk_size) produces the expected
+        // number of chunks for a given input size and chunk size.
+        let entries: Vec<(String, f64)> = (0..1001)
+            .map(|i| (format!("id-{}", i), i as f64 / 1000.0))
+            .collect();
+
+        let chunk_size = 1000;
+        let chunks: Vec<&[(String, f64)]> = entries.chunks(chunk_size).collect();
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 1000);
+        assert_eq!(chunks[1].len(), 1);
     }
 }
