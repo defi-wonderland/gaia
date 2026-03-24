@@ -32,7 +32,8 @@ pub fn create_client_config(brokers: &str, group_id: &str) -> ClientConfig {
         .set("session.timeout.ms", "6000")
         .set("max.poll.interval.ms", "3600000") // 1 hour — large batches with Postgres lookups + bulk OpenSearch loads can take minutes
         .set("fetch.message.max.bytes", "20971520") // 20MB — match hermes producer message.max.bytes
-        .set("max.partition.fetch.bytes", "20971520");
+        .set("max.partition.fetch.bytes", "20971520")
+        .set("queued.max.messages.kbytes", "32768"); // 32MB — limits librdkafka internal fetch buffer (default 64MB) to reduce memory spikes
 
     // Configure SASL/SSL if credentials are provided
     let username = env::var("KAFKA_USERNAME").ok();
