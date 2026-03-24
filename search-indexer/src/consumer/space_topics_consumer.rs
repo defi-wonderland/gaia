@@ -188,10 +188,7 @@ impl SpaceTopicsConsumer {
                                     pending_offsets.push((msg.topic().to_string(), msg.partition(), msg.offset()));
 
                                     if batch.len() >= self.batch_size {
-                                        let offsets_to_send = pending_offsets.clone();
-                                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
-                                        batch.clear();
-                                        pending_offsets.clear();
+                                        self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                                     }
                                 }
                                 Ok(None) => {
@@ -231,8 +228,7 @@ impl SpaceTopicsConsumer {
                         None => {
                             info!("Space topics Kafka stream ended");
                             if !batch.is_empty() {
-                                let offsets_to_send = pending_offsets.clone();
-                                self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
+                                self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                             }
                             break;
                         }
@@ -241,10 +237,7 @@ impl SpaceTopicsConsumer {
                 _ = flush_timer.tick() => {
                     if !batch.is_empty() {
                         debug!(count = batch.len(), "Flushing space topics batch due to timeout");
-                        let offsets_to_send = pending_offsets.clone();
-                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
-                        batch.clear();
-                        pending_offsets.clear();
+                        self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                     }
                 }
             }
@@ -256,17 +249,21 @@ impl SpaceTopicsConsumer {
     /// Flush a batch of pending space topic messages to the channel.
     async fn flush_batch(
         &self,
-        batch: &[PendingSpaceTopicMessage],
-        offsets: &[(String, i32, i64)],
+        batch: &mut Vec<PendingSpaceTopicMessage>,
+        offsets: &mut Vec<(String, i32, i64)>,
         processor_tx: &mpsc::Sender<SpaceTopicProcessingBatch>,
     ) -> Result<(), IngestError> {
         if batch.is_empty() {
             return Ok(());
         }
 
+        let batch = std::mem::take(batch);
+        let offsets = std::mem::take(offsets);
+        let message_count = batch.len();
+
         let mut all_events = Vec::new();
-        for pending in batch {
-            all_events.extend(pending.events.clone());
+        for mut pending in batch {
+            all_events.append(&mut pending.events);
         }
 
         if !all_events.is_empty() {
@@ -277,13 +274,13 @@ impl SpaceTopicsConsumer {
             async {
                 debug!(
                     event_count = event_count,
-                    message_count = batch.len(),
+                    message_count = message_count,
                     "Sending batch of space topic events to processor"
                 );
                 processor_tx
                     .send(SpaceTopicProcessingBatch {
                         events: all_events,
-                        offsets: offsets.to_vec(),
+                        offsets,
                         event_count,
                     })
                     .await
@@ -291,7 +288,7 @@ impl SpaceTopicsConsumer {
             }
             .instrument(info_span!(
                 "search_indexer.consume_space_topics_batch",
-                batch_size = batch.len(),
+                batch_size = message_count,
                 event_count = event_count,
                 offset_start = first_offset,
                 offset_end = last_offset

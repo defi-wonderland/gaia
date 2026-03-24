@@ -210,10 +210,7 @@ impl EntitiesConsumer {
 
                                     let total_events: usize = batch.iter().map(|p| p.events.len()).sum();
                                     if batch.len() >= self.batch_size || total_events >= Self::EVENTS_FLUSH_THRESHOLD {
-                                        let offsets_to_send = pending_offsets.clone();
-                                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
-                                        batch.clear();
-                                        pending_offsets.clear();
+                                        self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                                     }
                                 }
                                 Ok(None) => {
@@ -252,8 +249,7 @@ impl EntitiesConsumer {
                         None => {
                             info!("Kafka stream ended");
                             if !batch.is_empty() {
-                                let offsets_to_send = pending_offsets.clone();
-                                self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
+                                self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                             }
                             break;
                         }
@@ -262,10 +258,7 @@ impl EntitiesConsumer {
                 _ = flush_timer.tick() => {
                     if !batch.is_empty() {
                         debug!(count = batch.len(), "Flushing batch due to timeout");
-                        let offsets_to_send = pending_offsets.clone();
-                        self.flush_batch(&batch, &offsets_to_send, &processor_tx).await?;
-                        batch.clear();
-                        pending_offsets.clear();
+                        self.flush_batch(&mut batch, &mut pending_offsets, &processor_tx).await?;
                     }
                 }
             }
@@ -277,17 +270,21 @@ impl EntitiesConsumer {
     /// Flush a batch of pending messages to the channel.
     async fn flush_batch(
         &self,
-        batch: &[PendingMessage],
-        offsets: &[(String, i32, i64)],
+        batch: &mut Vec<PendingMessage>,
+        offsets: &mut Vec<(String, i32, i64)>,
         processor_tx: &mpsc::Sender<EntityProcessingBatch>,
     ) -> Result<(), IngestError> {
         if batch.is_empty() {
             return Ok(());
         }
 
+        let batch = std::mem::take(batch);
+        let offsets = std::mem::take(offsets);
+        let message_count = batch.len();
+
         let mut all_events = Vec::new();
-        for pending in batch {
-            all_events.extend(pending.events.clone());
+        for mut pending in batch {
+            all_events.append(&mut pending.events);
         }
 
         if !all_events.is_empty() {
@@ -298,14 +295,14 @@ impl EntitiesConsumer {
             async {
                 debug!(
                     event_count = event_count,
-                    message_count = batch.len(),
+                    message_count = message_count,
                     offset_count = offsets.len(),
                     "Sending batch of events to processor"
                 );
                 processor_tx
                     .send(EntityProcessingBatch {
                         events: all_events,
-                        offsets: offsets.to_vec(),
+                        offsets,
                         event_count,
                     })
                     .await
@@ -313,7 +310,7 @@ impl EntitiesConsumer {
             }
             .instrument(info_span!(
                 "search_indexer.consume_entities_batch",
-                batch_size = batch.len(),
+                batch_size = message_count,
                 event_count = event_count,
                 offset_start = first_offset,
                 offset_end = last_offset
