@@ -118,11 +118,11 @@ export const NAME_FIELD_BOOST = 1.5
  * matches in name and description (e.g. "geojson.io", "GeoJSON") can outscore
  * a short exact name match.
  *
- * Set to 8.0 to create a strong signal for exact token matches while
- * keeping the boost proportional to SCORE_BOOST=75 so that score field
- * differences can still override text match gaps between entities.
+ * Set to 20.0 to create a strong signal for exact token matches,
+ * ensuring entities whose name exactly matches the query token rank
+ * above entities that only match via prefix, fuzzy, or description.
  */
-export const NAME_EXACT_TOKEN_BOOST = 8.0
+export const NAME_EXACT_TOKEN_BOOST = 20.0
 
 /**
  * Boost value for exact raw name match on the name_raw keyword field.
@@ -140,7 +140,7 @@ export const NAME_RAW_EXACT_BOOST = 10.0
  * Boost value for case-insensitive raw name match on the name_raw keyword field.
  * Uses a `term` query with case_insensitive: true, so "world affairs" matches
  * "World affairs", "WORLD AFFAIRS", etc. but NOT "world-affairs" (different string).
- * Set below NAME_RAW_EXACT_BOOST (10.0) and NAME_EXACT_TOKEN_BOOST (8.0) so
+ * Set below NAME_RAW_EXACT_BOOST (10.0) and NAME_EXACT_TOKEN_BOOST (20.0) so
  * exact-case and token matches rank higher, but still provides a meaningful
  * boost for case-insensitive full-string matches.
  */
