@@ -137,15 +137,14 @@ services:
       GEO_RPC_URL: ${GEO_RPC_URL:?Set GEO_RPC_URL in .env to your Geo chain RPC endpoint}
     volumes:
       - ./hermes-amp/docker/config.toml:/amp/config.toml:ro
-      - ./hermes-amp/docker/providers:/amp/providers:ro
-      - ./hermes-amp/manifests:/amp/manifests:ro
+      - amp-manifests:/amp/manifests
       - amp-data:/amp/data
-    entrypoint: ["/ampd", "solo", "--config", "/amp/config.toml"]
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /amp/providers && printf 'kind = \"evm-rpc\"\\nnetwork = \"geo\"\\nurl = \"%s\"\\n' \"$$GEO_RPC_URL\" > /amp/providers/geo.toml && exec /ampd --config /amp/config.toml solo"]
     depends_on:
       amp-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:1610/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:1610/datasets || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -522,4 +521,5 @@ volumes:
   postgres-gaia:
   opensearch-data:
   amp-postgres:
+  amp-manifests:
   amp-data:

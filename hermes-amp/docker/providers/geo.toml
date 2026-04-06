@@ -1,10 +1,8 @@
 # Geo chain EVM-RPC provider.
 #
-# Set GEO_RPC_URL in your .env to point at your chain's RPC endpoint.
-# Example: GEO_RPC_URL=https://rpc-geo-testnet.example.com
+# NOTE: This template is for reference only. The docker-compose entrypoint
+# generates the actual provider file at runtime from GEO_RPC_URL.
 
 kind = "evm-rpc"
 network = "geo"
-
-[evm_rpc]
 url = "${GEO_RPC_URL}"
