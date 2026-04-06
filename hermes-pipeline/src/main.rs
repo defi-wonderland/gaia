@@ -1,7 +1,13 @@
 //! Hermes Pipeline
 //!
-//! Consumes space-related events from hermes-substream via hermes-relay and
+//! Consumes space-related events from Amp (Arrow Flight SQL) or Substreams and
 //! transforms them into Hermes protobuf messages for publication to Kafka.
+//!
+//! ## Data Sources
+//!
+//! - **Amp Flight SQL** (preferred): Set `AMP_FLIGHT_URL` to enable. Streams action logs
+//!   from an Amp server via Arrow Flight SQL protocol.
+//! - **Substreams gRPC** (legacy): Used when `AMP_FLIGHT_URL` is not set.
 //!
 //! ## Event Types Handled
 //!
@@ -16,16 +22,19 @@
 //!
 //! ## Architecture
 //!
-//! The pipeline processes blocks in two phases:
-//! 1. **Transform**: All pipelines run concurrently. Edits pipeline (async with IPFS fetch)
-//!    is kicked off first so network I/O happens in parallel with sync transforms.
-//! 2. **Emit**: Send events to Kafka in order (spaces, membership, trust, moderation,
-//!    topics, governance, voting, edits)
+//! The pipeline processes blocks in three phases:
+//! 0. **Prefetch**: Batch IPFS URI lookups for edits and proposals.
+//! 1. **Transform**: All pipelines run concurrently (all sync, using prefetched cache).
+//! 2. **Emit**: Send events to Kafka in dependency order.
 //!
 //! ## Configuration
 //!
 //! Environment variables:
 //! - `USE_MOCK` - Set to "true" or "1" to use mock data (default: false)
+//! - `AMP_FLIGHT_URL` - Amp Flight SQL URL (setting this enables Amp mode)
+//! - `AMP_DATASET` - Amp dataset (default: geo/actions)
+//! - `AMP_START_BLOCK` - First block to consume (default: 82655)
+//! - `AMP_END_BLOCK` - Last block to consume (optional)
 //! - `SUBSTREAMS_ENDPOINT` - Substreams endpoint URL (default: geotest.substreams.pinax.network:443)
 //! - `SUBSTREAMS_API_TOKEN` - API token for substreams authentication
 //! - `SUBSTREAMS_START_BLOCK` - First block to consume (default: 82655)
@@ -36,6 +45,7 @@
 //! - `KAFKA_SSL_CA_PEM` - Custom CA cert for SSL (optional)
 //! - `DATABASE_URL` - PostgreSQL URL for IPFS cache (required when USE_MOCK=false)
 
+mod amp_stream;
 mod emit;
 
 use std::collections::HashMap;
@@ -139,10 +149,10 @@ impl Pipeline {
 }
 
 impl Pipeline {
-    async fn process_block_impl(
+    pub(crate) async fn process_block_impl(
         &self,
         output_value: &[u8],
-        relay_meta: hermes_relay::stream::utils::BlockMetadata,
+        relay_meta: utils::BlockMetadata,
         meta: BlockMetadata,
     ) -> Result<(), PipelineError> {
         // Decode the Actions message from the block output
@@ -873,33 +883,10 @@ async fn async_main() -> anyhow::Result<()> {
     // Create the pipeline
     let pipeline = Pipeline::new(emitter, cache);
 
-    // Determine stream source: mock or live substreams
-    let source = if use_mock {
-        StreamSource::mock()
-    } else {
-        let endpoint = env::var("SUBSTREAMS_ENDPOINT")
-            .unwrap_or_else(|_| "geotest.substreams.pinax.network:443".to_string());
-        let start_block: i64 = env::var("SUBSTREAMS_START_BLOCK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(82655);
-        let end_block: u64 = env::var("SUBSTREAMS_END_BLOCK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(u64::MAX);
-
-        info!(
-            endpoint = %endpoint,
-            start_block = start_block,
-            end_block = end_block,
-            "Using live substreams source"
-        );
-
-        StreamSource::live(endpoint, HermesModule::Actions, start_block, end_block)
-    };
+    // Determine data source: Amp Flight, mock, or Substreams
+    let use_amp = env::var("AMP_FLIGHT_URL").is_ok();
 
     info!(
-        module = %HermesModule::Actions,
         topics.spaces = topics::SPACE_CREATIONS,
         topics.membership = topics::MEMBERSHIP,
         topics.trust = topics::TRUST_EXTENSIONS,
@@ -912,11 +899,42 @@ async fn async_main() -> anyhow::Result<()> {
         retry_factor = pipeline.retry_config.factor,
         retry_max_secs = pipeline.retry_config.max_delay.as_secs(),
         retry_max_count = pipeline.retry_config.max_retries,
+        source = if use_amp { "amp" } else if use_mock { "mock" } else { "substreams" },
         "Starting pipeline"
     );
 
-    // Run the pipeline
-    pipeline.run(source).await?;
+    if use_amp {
+        // Amp Flight SQL source — streams action logs via Arrow Flight
+        info!("Using Amp Flight stream source");
+        amp_stream::run_amp_stream(&pipeline).await?;
+    } else {
+        // Substreams source (mock or live)
+        let source = if use_mock {
+            StreamSource::mock()
+        } else {
+            let endpoint = env::var("SUBSTREAMS_ENDPOINT")
+                .unwrap_or_else(|_| "geotest.substreams.pinax.network:443".to_string());
+            let start_block: i64 = env::var("SUBSTREAMS_START_BLOCK")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(82655);
+            let end_block: u64 = env::var("SUBSTREAMS_END_BLOCK")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(u64::MAX);
+
+            info!(
+                endpoint = %endpoint,
+                start_block = start_block,
+                end_block = end_block,
+                "Using live substreams source"
+            );
+
+            StreamSource::live(endpoint, HermesModule::Actions, start_block, end_block)
+        };
+
+        pipeline.run(source).await?;
+    };
 
     // Flush all pending messages to Kafka before exiting
     info!("Flushing Kafka producer");

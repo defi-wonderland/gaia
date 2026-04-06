@@ -1,0 +1,17 @@
+# Amp solo-mode configuration for local Gaia development.
+#
+# All values can be overridden via env vars with AMP_CONFIG_ prefix.
+# Nested keys use double underscores: AMP_CONFIG_METADATA_DB__URL
+
+data_dir = "/amp/data"
+providers_dir = "/amp/providers"
+manifests_dir = "/amp/manifests"
+
+# Bind to all interfaces so Docker can expose the ports.
+flight_addr = "0.0.0.0:1602"
+jsonl_addr  = "0.0.0.0:1603"
+admin_api_addr = "0.0.0.0:1610"
+
+[metadata_db]
+url = "postgres://postgres:postgres@amp-postgres:5432/amp"
+auto_migrate = true

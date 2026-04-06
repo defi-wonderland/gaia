@@ -5,12 +5,14 @@
 #   tools     — Kafka UI (protobuf serde), OpenSearch Dashboards
 #   services  — All application services (API, indexers, pipeline, atlas, etc.)
 #   executor  — proposal-executor (requires external secrets)
+#   amp       — Amp blockchain data server (Arrow Flight SQL)
 #
 # Usage:
 #   docker compose --profile infra up                              # infrastructure only
 #   docker compose --profile infra --profile tools up              # + dev tools
 #   docker compose --profile infra --profile services up           # + all app services
 #   docker compose --profile infra --profile services --profile executor up  # + executor
+#   docker compose --profile infra --profile amp --profile services up       # + Amp data source
 
 services:
   # ---------------------------------------------------------------------------
@@ -96,6 +98,58 @@ services:
       start_period: 60s
     mem_limit: 4g
     mem_reservation: 2g
+
+  # ---------------------------------------------------------------------------
+  # Amp — blockchain data server (profile: amp)
+  #
+  # Runs Amp in solo mode with an external PostgreSQL metadata DB.
+  # Set GEO_RPC_URL in .env to point at your chain's RPC endpoint.
+  #
+  # Ports:
+  #   1602 — Arrow Flight (gRPC) — used by hermes-pipeline
+  #   1603 — JSON Lines (HTTP)   — for ad-hoc queries via curl
+  #   1610 — Admin API (HTTP)    — dataset registration & job management
+  # ---------------------------------------------------------------------------
+
+  amp-postgres:
+    image: postgres:16-alpine
+    profiles: [amp]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: amp
+    volumes:
+      - amp-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d amp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  amp:
+    image: ghcr.io/edgeandnode/amp:canary
+    profiles: [amp]
+    ports:
+      - "127.0.0.1:1602:1602"
+      - "127.0.0.1:1603:1603"
+      - "127.0.0.1:1610:1610"
+    environment:
+      GEO_RPC_URL: ${GEO_RPC_URL:?Set GEO_RPC_URL in .env to your Geo chain RPC endpoint}
+    volumes:
+      - ./hermes-amp/docker/config.toml:/amp/config.toml:ro
+      - ./hermes-amp/docker/providers:/amp/providers:ro
+      - ./hermes-amp/manifests:/amp/manifests:ro
+      - amp-data:/amp/data
+    entrypoint: ["/ampd", "solo", "--config", "/amp/config.toml"]
+    depends_on:
+      amp-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:1610/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # Dev Tools (profile: tools)
@@ -274,8 +328,15 @@ services:
       KAFKA_BROKER: kafka:29092
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DATABASE_URL: postgresql://postgres:postgres@postgres-gaia:5432/gaia
-      SUBSTREAMS_ENDPOINT: ${SUBSTREAMS_ENDPOINT}
-      SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
+      # Data source: set AMP_FLIGHT_URL to use Amp, leave empty for Substreams.
+      # When using the amp profile: AMP_FLIGHT_URL=http://amp:1602
+      SUBSTREAMS_ENDPOINT: ${SUBSTREAMS_ENDPOINT:-}
+      SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN:-}
+      AMP_FLIGHT_URL: ${AMP_FLIGHT_URL:-}
+      AMP_DATASET: ${AMP_DATASET:-geo/actions}
+      AMP_START_BLOCK: ${AMP_START_BLOCK:-82655}
+      AMP_END_BLOCK: ${AMP_END_BLOCK:-}
+      AMP_ACTIONS_ADDRESS: ${AMP_ACTIONS_ADDRESS:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       kafka:
@@ -460,3 +521,5 @@ volumes:
   kafka-data:
   postgres-gaia:
   opensearch-data:
+  amp-postgres:
+  amp-data:

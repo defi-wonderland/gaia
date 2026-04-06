@@ -11,6 +11,7 @@ members = [
 
     "sdk",
 
+    "hermes-amp",
     "hermes-kafka",
     "hermes-schema",
     "hermes-relay",

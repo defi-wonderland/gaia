@@ -1,0 +1,10 @@
+# Geo chain EVM-RPC provider.
+#
+# Set GEO_RPC_URL in your .env to point at your chain's RPC endpoint.
+# Example: GEO_RPC_URL=https://rpc-geo-testnet.example.com
+
+kind = "evm-rpc"
+network = "geo"
+
+[evm_rpc]
+url = "${GEO_RPC_URL}"
