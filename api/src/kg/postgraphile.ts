@@ -2,6 +2,7 @@ import SimplifyInflectionPlugin from "@graphile-contrib/pg-simplify-inflector"
 import * as Sentry from "@sentry/node"
 import {GraphQLError, print} from "graphql"
 import {createYoga, maskError, type Plugin, useExecutionCancellation} from "graphql-yoga"
+import {useResponseCache} from "@graphql-yoga/plugin-response-cache"
 import type {PoolClient} from "pg"
 import {Pool} from "pg"
 import {createPostGraphileSchema} from "postgraphile"
@@ -228,7 +229,15 @@ function usePgClient(pool: Pool): Plugin<{pgClient: PoolClient}> {
 }
 
 // Shared plugins for GraphQL server
-const sharedPlugins = [useGraphQLInstrumentation(), usePgClient(pgPool), useExecutionCancellation()]
+const sharedPlugins = [
+	useResponseCache({
+		session: () => null,
+		ttl: 10_000,
+	}),
+	useGraphQLInstrumentation(),
+	usePgClient(pgPool),
+	useExecutionCancellation(),
+]
 
 // GraphQL server without uuidScalarPlugin
 export const graphqlServer = createYoga<GraphQLServerContext>({
