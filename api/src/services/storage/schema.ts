@@ -2,10 +2,12 @@ import {relations as drizzleRelations, type InferSelectModel, sql} from "drizzle
 import {
 	bigint,
 	boolean,
+	cidr,
 	customType,
 	decimal,
 	doublePrecision,
 	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -950,3 +952,51 @@ export const notificationDeliveries = pgTable(
 		index("idx_deliveries_pending").on(table.status, table.nextRetryAt),
 	],
 )
+
+/**
+ * rate_limit_overrides
+ *
+ * Per-IP and per-CIDR overrides for the GraphQL HTTP rate limiter. Rows here
+ * take precedence over the env-configured default. Bare IPs may be inserted as
+ * `'1.2.3.4'` (Postgres `cidr` widens to `/32`) or `'1.2.3.4/32'`. CIDR ranges
+ * (e.g. `'10.0.0.0/24'`) are matched by the most-specific containing prefix.
+ *
+ * `requests_per_min = 0` blocks the IP entirely (kill switch).
+ *
+ * Lookup query (from middleware):
+ *   SELECT requests_per_min FROM rate_limit_overrides
+ *   WHERE ip_range >>= $1::inet
+ *   ORDER BY masklen(ip_range) DESC LIMIT 1;
+ */
+export const rateLimitOverrides = pgTable(
+	"rate_limit_overrides",
+	{
+		ipRange: cidr("ip_range").primaryKey(),
+		requestsPerMin: integer("requests_per_min").notNull(),
+		description: text(),
+		createdAt: timestamp("created_at", {withTimezone: true, mode: "date"}).defaultNow().notNull(),
+		updatedAt: timestamp("updated_at", {withTimezone: true, mode: "date"}).defaultNow().notNull(),
+	},
+	(table) => [index("idx_rate_limit_overrides_ip_range").using("gist", table.ipRange.op("inet_ops"))],
+)
+
+/**
+ * api_keys
+ *
+ * API keys for backend-to-backend rate limit identification. When a request
+ * includes an `X-Api-Key` header matching an enabled row, the rate limiter
+ * uses the key's `requests_per_min` instead of the IP-based default.
+ *
+ * `requests_per_min = NULL` means unlimited (no counter incremented).
+ * `enabled = false` means the key is ignored (falls through to IP-based limiting).
+ *
+ * Keys are cached per-pod for RATE_LIMIT_OVERRIDE_CACHE_TTL_SECONDS (default 60s).
+ */
+export const apiKeys = pgTable("api_keys", {
+	key: text().primaryKey(),
+	clientName: text("client_name").notNull(),
+	requestsPerMin: integer("requests_per_min"),
+	enabled: boolean().notNull().default(true),
+	createdAt: timestamp("created_at", {withTimezone: true, mode: "date"}).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", {withTimezone: true, mode: "date"}).defaultNow().notNull(),
+})

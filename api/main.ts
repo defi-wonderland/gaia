@@ -3,8 +3,10 @@ import {Effect, Either} from "effect"
 import {Hono} from "hono"
 import {cors} from "hono/cors"
 import {describeRoute, openAPISpecs} from "hono-openapi"
+import Redis from "ioredis"
 import {health} from "./src/health"
 import {getGraphqlPoolPressure, graphqlServer} from "./src/kg/postgraphile"
+import {rateLimit} from "./src/middleware/rateLimit"
 import {canonicalRequestLogging, requestId} from "./src/middleware/requestLogging"
 import {createProfileRouter} from "./src/profile"
 import {createProposalsRouter} from "./src/proposals"
@@ -12,6 +14,10 @@ import {createSearchRouter} from "./src/search"
 import {isPoolConnectTimeout} from "./src/services/dbFailures"
 import {shouldShedPoolTraffic} from "./src/services/dbSaturation"
 import {uploadEdit, uploadFile} from "./src/services/ipfs"
+import {createApiKeyLookup} from "./src/services/rateLimit/apiKeys"
+import {loadRateLimitConfig} from "./src/services/rateLimit/config"
+import {createOverrideLookup} from "./src/services/rateLimit/overrides"
+import {createValkeyRateLimitStore} from "./src/services/rateLimit/store"
 import {runtime} from "./src/services/runtime"
 import {OpenSearchClient} from "./src/services/search"
 import {db} from "./src/services/storage/storage"
@@ -103,35 +109,159 @@ log.info("Proposals routes enabled")
 
 app.get("/", swaggerUI({url: "/openapi"}))
 
-app.use("/graphql", async (c) => {
-	const requestId = c.get("requestId") || "unknown"
-
-	// Pool pressure shedding is handled inside usePgClient (only on cache misses).
-	// This allows cached responses to be served even when the DB pool is saturated.
-	try {
-		return await graphqlServer.fetch(c.req.raw, {
-			traceContext: c.get("traceContext"),
-			requestId,
-			setGraphqlOperationName: (operationName: string) => {
-				c.set("graphqlOperationName", operationName)
+// Rate limit middleware: scoped to /graphql only for v1.
+// Unlimited allowlist (env CIDRs) → DB overrides → default per-minute limit.
+// Counter is shared across all API pods via Valkey; failure mode is fail-open.
+const rateLimitConfig = loadRateLimitConfig()
+if (rateLimitConfig.enabled) {
+	const valkeyUrl = process.env.VALKEY_URL
+	if (!valkeyUrl) {
+		log.warn("Rate limit enabled but VALKEY_URL is not set — disabling rate limit")
+	} else {
+		const valkey = new Redis(valkeyUrl, {
+			maxRetriesPerRequest: 1,
+			lazyConnect: true,
+			connectTimeout: 2000,
+			commandTimeout: 500,
+			retryStrategy(times) {
+				return Math.min(times * 500, 5000)
 			},
 		})
-	} catch (error) {
-		if (isPoolConnectTimeout(error) || (error instanceof Error && error.message === "pool_pressure_shed")) {
-			const freshPoolPressure = getGraphqlPoolPressure()
-			log.warn("GraphQL overloaded: pool pressure shed", {
-				requestId,
-				path: c.req.path,
-				method: c.req.method,
-				poolPressure: freshPoolPressure,
-			})
+		valkey.on("error", (err) => log.warn("Valkey rate limit client error", {error: String(err)}))
+		valkey.on("connect", () => log.info("Valkey rate limit client connected"))
+		valkey.connect().catch((err) => {
+			log.warn("Valkey rate limit initial connection failed, will retry", {error: String(err)})
+		})
 
-			return createGraphqlOverloadResponse(requestId)
-		}
-
-		throw error
+		const store = createValkeyRateLimitStore(valkey)
+		const overrides = createOverrideLookup(db, rateLimitConfig.overrideCacheTtlSeconds)
+		const apiKeyLookup = createApiKeyLookup(db, rateLimitConfig.overrideCacheTtlSeconds)
+		app.use("/graphql", rateLimit({config: rateLimitConfig, store, overrides, apiKeys: apiKeyLookup}))
+		log.info("Rate limit enabled on /graphql", {
+			defaultPerMinute: rateLimitConfig.defaultPerMinute,
+			unlimitedAllowlistEntries: rateLimitConfig.unlimitedAllowlist.length,
+			trustedProxyHops: rateLimitConfig.trustedProxyHops,
+		})
 	}
-})
+} else {
+	log.info("Rate limit disabled (RATE_LIMIT_ENABLED=false)")
+}
+
+app.on(
+	["GET", "POST"],
+	"/graphql",
+	describeRoute({
+		tags: ["GraphQL"],
+		summary: "PostGraphile GraphQL endpoint",
+		description: [
+			"PostGraphile-generated GraphQL endpoint over the Geo knowledge graph.",
+			"",
+			"### Rate Limits",
+			"This endpoint is rate-limited to **1000 requests per minute per IP** by default.",
+			"Cluster-internal traffic (pod-to-pod within DOKS) is exempt.",
+			"",
+			"Successful responses include:",
+			"- `RateLimit-Limit` — your per-minute quota",
+			"- `RateLimit-Remaining` — requests remaining in the current window",
+			"- `RateLimit-Reset` — seconds until the window resets",
+			"",
+			"Exceeding the limit returns `HTTP 429 Too Many Requests` with `Retry-After`",
+			'and a body of `{"error":"rate_limit_exceeded","retry_after_seconds":N}`.',
+			"",
+			"**Need a higher limit?** If 1000 req/min is not enough for your integration,",
+			"contact the Geo team to request an override for your IP or IP range.",
+		].join("\n"),
+		responses: {
+			200: {
+				description: "GraphQL execution result (data and/or errors)",
+				content: {
+					"application/json": {
+						schema: {type: "object"},
+					},
+				},
+				headers: {
+					"RateLimit-Limit": {
+						description: "Per-minute request quota for the calling IP",
+						schema: {type: "integer"},
+					},
+					"RateLimit-Remaining": {
+						description: "Requests remaining in the current minute window",
+						schema: {type: "integer"},
+					},
+					"RateLimit-Reset": {
+						description: "Seconds until the rate-limit window resets",
+						schema: {type: "integer"},
+					},
+				},
+			},
+			429: {
+				description: "Rate limit exceeded — see Retry-After header",
+				content: {
+					"application/json": {
+						schema: {
+							type: "object",
+							properties: {
+								error: {type: "string", example: "rate_limit_exceeded"},
+								retry_after_seconds: {type: "integer", example: 23},
+							},
+							required: ["error", "retry_after_seconds"],
+						},
+					},
+				},
+				headers: {
+					"Retry-After": {
+						description: "Seconds until the rate-limit window resets",
+						schema: {type: "integer"},
+					},
+				},
+			},
+			503: {
+				description: "Database temporarily overloaded; retry shortly",
+				content: {
+					"application/json": {
+						schema: {
+							type: "object",
+							properties: {
+								error: {type: "string", example: "database temporarily overloaded"},
+								requestId: {type: "string"},
+							},
+							required: ["error", "requestId"],
+						},
+					},
+				},
+			},
+		},
+	}),
+	async (c) => {
+		const requestId = c.get("requestId") || "unknown"
+
+		// Pool pressure shedding is handled inside usePgClient (only on cache misses).
+		// This allows cached responses to be served even when the DB pool is saturated.
+		try {
+			return await graphqlServer.fetch(c.req.raw, {
+				traceContext: c.get("traceContext"),
+				requestId,
+				setGraphqlOperationName: (operationName: string) => {
+					c.set("graphqlOperationName", operationName)
+				},
+			})
+		} catch (error) {
+			if (isPoolConnectTimeout(error) || (error instanceof Error && error.message === "pool_pressure_shed")) {
+				const freshPoolPressure = getGraphqlPoolPressure()
+				log.warn("GraphQL overloaded: pool pressure shed", {
+					requestId,
+					path: c.req.path,
+					method: c.req.method,
+					poolPressure: freshPoolPressure,
+				})
+
+				return createGraphqlOverloadResponse(requestId)
+			}
+
+			throw error
+		}
+	},
+)
 
 app.post(
 	"/ipfs/upload-edit",
@@ -461,7 +591,19 @@ app.get(
 			info: {
 				title: "Geo API",
 				version: "1.0.0",
-				description: "API for interacting with the Geo knowledge graph",
+				description: [
+					"API for interacting with the Geo knowledge graph.",
+					"",
+					"## Rate Limits",
+					"",
+					"The `/graphql` endpoint applies a per-IP rate limit (default **1000 requests per minute**).",
+					"Responses include `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers.",
+					"When the limit is exceeded the endpoint returns `HTTP 429 Too Many Requests` with",
+					"`Retry-After` indicating seconds until the window resets.",
+					"",
+					"Cluster-internal traffic is exempt. **If you need a higher limit for your IP or IP range,",
+					"please contact the Geo team to request an override.**",
+				].join("\n"),
 			},
 			servers: [
 				{url: "http://localhost:3000", description: "Local Server"},
