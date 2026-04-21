@@ -156,7 +156,7 @@ export function upload(formData: FormData, url: string) {
 
 		const responseText = yield* Effect.tryPromise({
 			try: () => response.text(),
-			catch: (error) => new IpfsParseResponseError(`Could not parse IPFS JSON response: ${error}`),
+			catch: (error) => new IpfsParseResponseError(`Could not read IPFS response body: ${error}`),
 		})
 
 		const diagnostics = {
