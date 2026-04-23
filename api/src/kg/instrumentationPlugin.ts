@@ -1,4 +1,4 @@
-import {ROOT_CONTEXT, SpanStatusCode, trace} from "@opentelemetry/api"
+import {context, ROOT_CONTEXT, SpanStatusCode, trace} from "@opentelemetry/api"
 import * as Sentry from "@sentry/node"
 import {
 	type ASTNode,
@@ -12,7 +12,7 @@ import {
 } from "graphql"
 import type {Plugin} from "graphql-yoga"
 import {graphqlQueryFingerprint} from "../services/queryFingerprint"
-import {log} from "../services/telemetry"
+import {log, SLOW_GRAPHQL_THRESHOLD_MS} from "../services/telemetry"
 
 // GraphQL error codes that always indicate a client-side problem (bad input,
 // syntax/validation errors). These are the expected consequence of a
@@ -77,7 +77,6 @@ export function isClientError(error: unknown): boolean {
 	return false
 }
 
-const SLOW_QUERY_THRESHOLD_MS = 3000
 const LARGE_RESPONSE_THRESHOLD_BYTES = 1_000_000 // 1 MB
 
 type TraceContext = {
@@ -146,7 +145,7 @@ function getOperationLabel(args: {operationName?: string | null; document: {defi
 
 export function useGraphQLInstrumentation(): Plugin {
 	return {
-		onExecute({args}) {
+		onExecute({args, executeFn, setExecuteFn}) {
 			const operationName = args.operationName
 			const requestId = getRequestId(args.contextValue)
 
@@ -194,6 +193,14 @@ export function useGraphQLInstrumentation(): Plugin {
 				parentContext,
 			)
 
+			// Install this GraphQL span as the active OTEL context during execution
+			// so the pg auto-instrumentation parents each SQL statement under it.
+			// AsyncLocalStorage in telemetry.ts propagates this through drizzle and
+			// postgraphile's pgClient calls without any per-call-site glue.
+			const executeCtx = trace.setSpan(parentContext, span)
+			const originalExecute = executeFn
+			setExecuteFn((executeArgs) => context.with(executeCtx, () => originalExecute(executeArgs)))
+
 			return {
 				onExecuteDone({result}) {
 					const durationMs = Date.now() - executeStartMs
@@ -226,7 +233,7 @@ export function useGraphQLInstrumentation(): Plugin {
 						})
 					}
 
-					if (durationMs >= SLOW_QUERY_THRESHOLD_MS) {
+					if (durationMs >= SLOW_GRAPHQL_THRESHOLD_MS) {
 						log.warn("Slow GraphQL query", {
 							operationName: operationLabel,
 							queryFingerprint,

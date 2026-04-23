@@ -1,3 +1,11 @@
+// Telemetry must be imported first: it runs Sentry.init() and registers the pg
+// auto-instrumentation at module-load time. Anything imported before it that
+// transitively requires "pg" would load the driver unpatched and produce no
+// SQL spans. Keep this line at the top (biome-ignore prevents it being sorted
+// into the regular import block below).
+// biome-ignore assist/source/organizeImports: must init before any pg-loading import
+import {log} from "./src/services/telemetry"
+
 import {swaggerUI} from "@hono/swagger-ui"
 import {Effect, Either} from "effect"
 import {Hono} from "hono"
@@ -15,7 +23,6 @@ import {uploadEdit, uploadFile} from "./src/services/ipfs"
 import {runtime} from "./src/services/runtime"
 import {OpenSearchClient} from "./src/services/search"
 import {db} from "./src/services/storage/storage"
-import {log} from "./src/services/telemetry"
 import {createVersionedRouter} from "./src/versioned"
 
 type AppEnv = {

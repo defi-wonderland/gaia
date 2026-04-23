@@ -8,7 +8,7 @@
  * - OTEL span wrapping for HTTP request context (flows through SentrySpanProcessor)
  */
 
-import {SpanStatusCode, trace} from "@opentelemetry/api"
+import {context, SpanStatusCode, trace} from "@opentelemetry/api"
 import type {Context, Next} from "hono"
 import {detectDbFailureClass} from "../services/dbFailures"
 import {log} from "../services/telemetry"
@@ -81,8 +81,13 @@ export function canonicalRequestLogging() {
 			traceFlags: span.spanContext().traceFlags,
 		})
 
+		// Activate this span as the OTEL context for `next()` so the pg
+		// auto-instrumentation (registered with requireParentSpan: true) parents
+		// SQL spans under it on REST paths. GraphQL paths further activate a
+		// graphql span in kg/instrumentationPlugin.ts, which nests under this.
+		const httpCtx = trace.setSpan(context.active(), span)
 		try {
-			await next()
+			await context.with(httpCtx, () => next())
 
 			const status = c.res.status
 			const duration = Date.now() - startTime

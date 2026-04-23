@@ -1,13 +1,23 @@
 import {NodeSdk} from "@effect/opentelemetry"
-import {trace} from "@opentelemetry/api"
+import {context, trace} from "@opentelemetry/api"
+import {AsyncLocalStorageContextManager} from "@opentelemetry/context-async-hooks"
+import {registerInstrumentations} from "@opentelemetry/instrumentation"
+import {PgInstrumentation} from "@opentelemetry/instrumentation-pg"
 import {resourceFromAttributes} from "@opentelemetry/resources"
 import {BasicTracerProvider} from "@opentelemetry/sdk-trace-base"
 import {ATTR_SERVICE_NAME} from "@opentelemetry/semantic-conventions"
+import type {TransactionEvent} from "@sentry/core"
 import * as Sentry from "@sentry/node"
 import {SentrySpanProcessor} from "@sentry/opentelemetry"
 import {Effect, HashMap, Layer, Logger, LogLevel} from "effect"
 
 const SERVICE_NAME = "gaia-api"
+
+// Threshold above which a GraphQL operation is treated as "slow". Drives two
+// pieces of behavior: the slow-query warn log in kg/instrumentationPlugin.ts,
+// and the beforeSendTransaction filter below (which drops db.* spans from
+// transactions where every GraphQL child came in under this threshold).
+export const SLOW_GRAPHQL_THRESHOLD_MS = 3000
 
 // Track whether Sentry is initialized
 let sentryInitialized = false
@@ -35,11 +45,22 @@ function initSentry() {
 		tracesSampleRate,
 		skipOpenTelemetrySetup: true, // We manage OTEL setup ourselves
 		debug,
+		beforeSendTransaction: filterFastGraphqlDbSpans,
 	})
 
+	// Enable async-context propagation for the global tracer so child spans
+	// created inside promises / awaits (notably pg queries) find their parent
+	// span via context.active(). We use the standard AsyncLocalStorage manager,
+	// not Sentry's custom SentryContextManager; the latter manipulates Sentry's
+	// hub/scope in ways that collide with Effect's Fiber-based propagation, but
+	// the vanilla AsyncLocalStorage one is safe to run alongside Effect.
+	const contextManager = new AsyncLocalStorageContextManager()
+	contextManager.enable()
+	context.setGlobalContextManager(contextManager)
+
 	// Set up a minimal global TracerProvider for non-Effect code (GraphQL, HTTP middleware).
-	// We intentionally skip SentryContextManager to avoid conflicts with Effect's Fiber-based context.
-	// Effect has its own scoped provider; this global provider is only for trace.getTracer() calls.
+	// Effect has its own scoped provider; this global provider is used by
+	// trace.getTracer() calls and by the pg auto-instrumentation registered below.
 	spanProcessor = new SentrySpanProcessor()
 	const globalProvider = new BasicTracerProvider({
 		resource: resourceFromAttributes({
@@ -49,8 +70,149 @@ function initSentry() {
 	})
 	trace.setGlobalTracerProvider(globalProvider)
 
+	// Auto-instrument pg so every SQL statement from drizzle and postgraphile's
+	// pgClient becomes a span parented to whichever GraphQL / HTTP span is
+	// active in the AsyncLocalStorage context. Transactions whose GraphQL child
+	// came in under SLOW_GRAPHQL_THRESHOLD_MS have their db.* descendants
+	// stripped in beforeSendTransaction below, so healthy traffic does not
+	// flood Sentry. requireParentSpan avoids creating orphan root transactions
+	// for queries that run outside any request (startup, cron).
+	registerInstrumentations({
+		tracerProvider: globalProvider,
+		instrumentations: [
+			new PgInstrumentation({
+				requireParentSpan: true,
+			}),
+		],
+	})
+
+	// PgInstrumentation installs its patch via require-in-the-middle, which
+	// only intercepts CJS require(); Bun's ESM loader resolves `import {Pool}
+	// from "pg"` without tripping that hook, so the static imports in
+	// storage.ts / kg/postgraphile.ts would otherwise load pg unpatched and
+	// every SQL query would bypass instrumentation. Forcing a CJS require here
+	// primes the hook so the cached module object is already patched by the
+	// time any later ESM import resolves.
+	require("pg")
+
 	sentryInitialized = true
 	console.log(`[TELEMETRY] Sentry enabled (env: ${environment})`)
+}
+
+type SentrySpan = {
+	span_id?: string
+	parent_span_id?: string
+	start_timestamp?: number
+	timestamp?: number
+	data?: Record<string, unknown>
+	op?: string
+}
+
+function spanDurationMs(span: Pick<SentrySpan, "start_timestamp" | "timestamp">): number {
+	const start = span.start_timestamp
+	const end = span.timestamp
+	if (typeof start !== "number" || typeof end !== "number") return 0
+	return (end - start) * 1000
+}
+
+function isGraphqlSpan(span: SentrySpan): boolean {
+	return !!span.data && "graphql.operation_name" in span.data
+}
+
+function isDbSpan(span: SentrySpan): boolean {
+	return !!span.data && "db.system" in span.data
+}
+
+/**
+ * Drops db.* spans that are descendants of a GraphQL span that completed
+ * under SLOW_GRAPHQL_THRESHOLD_MS. Approach: tail-based filter; we always
+ * emit SQL spans (cheap in-process), then strip them at export time based on
+ * the final GraphQL duration. A db span is kept if any of its ancestors is a
+ * slow GraphQL span OR if it has no GraphQL ancestor at all (e.g. REST paths).
+ *
+ * TODO(tracing): a lighter alternative is to never emit SQL spans at all,
+ * and instead push statement text into an AsyncLocalStorage buffer that
+ * gets attached to the slow-query warn log only when the GraphQL operation
+ * trips the threshold (~"approach B"). Loses the Sentry waterfall UI but
+ * removes span-creation overhead on fast requests entirely. Switch if the
+ * tail-based filter proves too noisy or expensive.
+ */
+export function filterFastGraphqlDbSpans(event: TransactionEvent): TransactionEvent {
+	const spans = event.spans as SentrySpan[] | undefined
+	if (!spans || spans.length === 0) return event
+
+	const slowGqlIds = new Set<string>()
+	const fastGqlIds = new Set<string>()
+	for (const span of spans) {
+		if (!isGraphqlSpan(span) || !span.span_id) continue
+		if (spanDurationMs(span) >= SLOW_GRAPHQL_THRESHOLD_MS) {
+			slowGqlIds.add(span.span_id)
+		} else {
+			fastGqlIds.add(span.span_id)
+		}
+	}
+
+	if (fastGqlIds.size === 0) return event
+
+	const byId = new Map<string, SentrySpan>()
+	for (const span of spans) {
+		if (span.span_id) byId.set(span.span_id, span)
+	}
+
+	// Walk ancestors of `span`. Returns true if the nearest GraphQL ancestor is
+	// fast. If we hit a slow GraphQL ancestor first, or no GraphQL ancestor at
+	// all, returns false (keep the span). Memoized across the whole transaction:
+	// every span between `span` and the nearest GraphQL ancestor shares the same
+	// answer, so we fill `memo` for the entire walked path in one pass. `path`
+	// also doubles as the cycle guard, avoiding a fresh `Set` per call.
+	const memo = new Map<string, boolean>()
+	function isUnderFastGraphqlOnly(span: SentrySpan): boolean {
+		if (span.span_id) {
+			const cached = memo.get(span.span_id)
+			if (cached !== undefined) return cached
+		}
+
+		const path: string[] = []
+		let cur: SentrySpan | undefined = span
+		let result = false
+
+		while (cur?.parent_span_id) {
+			if (cur.span_id) path.push(cur.span_id)
+
+			const parentId = cur.parent_span_id
+			if (path.includes(parentId)) break
+
+			const cachedParent = memo.get(parentId)
+			if (cachedParent !== undefined) {
+				result = cachedParent
+				break
+			}
+			if (slowGqlIds.has(parentId)) {
+				result = false
+				break
+			}
+			if (fastGqlIds.has(parentId)) {
+				result = true
+				break
+			}
+
+			const parent = byId.get(parentId)
+			if (!parent) break
+			cur = parent
+		}
+
+		for (const id of path) {
+			memo.set(id, result)
+		}
+		return result
+	}
+
+	event.spans = spans.filter((span) => {
+		if (!isDbSpan(span)) return true
+		return !isUnderFastGraphqlOnly(span)
+	}) as typeof event.spans
+
+	return event
 }
 
 // Initialize immediately when module is loaded
