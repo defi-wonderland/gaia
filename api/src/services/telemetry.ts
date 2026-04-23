@@ -51,7 +51,7 @@ function initSentry() {
 	// Enable async-context propagation for the global tracer so child spans
 	// created inside promises / awaits (notably pg queries) find their parent
 	// span via context.active(). We use the standard AsyncLocalStorage manager,
-	// not Sentry's custom SentryContextManager — the latter manipulates Sentry's
+	// not Sentry's custom SentryContextManager; the latter manipulates Sentry's
 	// hub/scope in ways that collide with Effect's Fiber-based propagation, but
 	// the vanilla AsyncLocalStorage one is safe to run alongside Effect.
 	const contextManager = new AsyncLocalStorageContextManager()
@@ -86,6 +86,15 @@ function initSentry() {
 		],
 	})
 
+	// PgInstrumentation installs its patch via require-in-the-middle, which
+	// only intercepts CJS require(); Bun's ESM loader resolves `import {Pool}
+	// from "pg"` without tripping that hook, so the static imports in
+	// storage.ts / kg/postgraphile.ts would otherwise load pg unpatched and
+	// every SQL query would bypass instrumentation. Forcing a CJS require here
+	// primes the hook so the cached module object is already patched by the
+	// time any later ESM import resolves.
+	require("pg")
+
 	sentryInitialized = true
 	console.log(`[TELEMETRY] Sentry enabled (env: ${environment})`)
 }
@@ -116,7 +125,7 @@ function isDbSpan(span: SentrySpan): boolean {
 
 /**
  * Drops db.* spans that are descendants of a GraphQL span that completed
- * under SLOW_GRAPHQL_THRESHOLD_MS. Approach: tail-based filter — we always
+ * under SLOW_GRAPHQL_THRESHOLD_MS. Approach: tail-based filter; we always
  * emit SQL spans (cheap in-process), then strip them at export time based on
  * the final GraphQL duration. A db span is kept if any of its ancestors is a
  * slow GraphQL span OR if it has no GraphQL ancestor at all (e.g. REST paths).
