@@ -161,19 +161,50 @@ export function filterFastGraphqlDbSpans(event: TransactionEvent): TransactionEv
 
 	// Walk ancestors of `span`. Returns true if the nearest GraphQL ancestor is
 	// fast. If we hit a slow GraphQL ancestor first, or no GraphQL ancestor at
-	// all, returns false (keep the span).
+	// all, returns false (keep the span). Memoized across the whole transaction:
+	// every span between `span` and the nearest GraphQL ancestor shares the same
+	// answer, so we fill `memo` for the entire walked path in one pass. `path`
+	// also doubles as the cycle guard, avoiding a fresh `Set` per call.
+	const memo = new Map<string, boolean>()
 	function isUnderFastGraphqlOnly(span: SentrySpan): boolean {
+		if (span.span_id) {
+			const cached = memo.get(span.span_id)
+			if (cached !== undefined) return cached
+		}
+
+		const path: string[] = []
 		let cur: SentrySpan | undefined = span
-		const seen = new Set<string>()
-		while (cur?.parent_span_id && !seen.has(cur.parent_span_id)) {
-			seen.add(cur.parent_span_id)
-			const parent = byId.get(cur.parent_span_id)
-			if (!parent) return false
-			if (parent.span_id && slowGqlIds.has(parent.span_id)) return false
-			if (parent.span_id && fastGqlIds.has(parent.span_id)) return true
+		let result = false
+
+		while (cur?.parent_span_id) {
+			if (cur.span_id) path.push(cur.span_id)
+
+			const parentId = cur.parent_span_id
+			if (path.includes(parentId)) break
+
+			const cachedParent = memo.get(parentId)
+			if (cachedParent !== undefined) {
+				result = cachedParent
+				break
+			}
+			if (slowGqlIds.has(parentId)) {
+				result = false
+				break
+			}
+			if (fastGqlIds.has(parentId)) {
+				result = true
+				break
+			}
+
+			const parent = byId.get(parentId)
+			if (!parent) break
 			cur = parent
 		}
-		return false
+
+		for (const id of path) {
+			memo.set(id, result)
+		}
+		return result
 	}
 
 	event.spans = spans.filter((span) => {
