@@ -7,9 +7,18 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tokio_retry::strategy::ExponentialBackoff;
 use tracing::{error, info, warn};
+
+/// Max time to wait for the first usable block (BlockScopedData or BlockUndoSignal)
+/// after a gRPC stream connects. If it elapses and we were resuming from a persisted
+/// cursor, treat the cursor as stale: drop it and reconnect fresh.
+///
+/// The testnet produces ~1 block per 8 s, so 3 min = ~22 block-times — well past any
+/// normal idle gap, but short enough to recover quickly when a cursor has aged out
+/// of the server's fork database.
+const STALE_CURSOR_WATCHDOG: Duration = Duration::from_secs(180);
 
 use crate::pb::sf::substreams::rpc::v2::{
     BlockScopedData, BlockUndoSignal, Request, Response, response::Message,
@@ -61,6 +70,10 @@ fn stream_blocks(
     let mut latest_cursor = cursor.unwrap_or_default();
     let mut backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
     let mut last_progress_report = Instant::now();
+    // Tracks whether we've already fallen back to a cursorless reconnect in this
+    // streaming session. Prevents oscillation — one fallback per poisoned cursor,
+    // then we let normal backoff + the container's liveness probe handle it.
+    let mut stale_cursor_fallback_used = false;
 
     try_stream! {
         loop {
@@ -99,9 +112,66 @@ fn stream_blocks(
                     println!("Blockstreams connected");
 
                     let mut encountered_error = false;
-                    for await response in stream{
+                    // Inline stream consumption (replaces `for await response in stream`) so we can
+                    // apply a watchdog timeout on the first block. If the stream sits silent after
+                    // connecting — the known failure mode for a cursor that has aged out of the
+                    // server's fork database — the watchdog kicks in, clears the cursor, and lets
+                    // the outer loop reconnect without it.
+                    let mut stream = Box::pin(stream);
+                    let mut got_first_block = false;
+                    loop {
+                        let next = if got_first_block {
+                            // After the first block, the stream is known-good. The server may
+                            // legitimately idle at chain head, so no deadline here — just await.
+                            stream.next().await
+                        } else {
+                            // Watchdog: enforce STALE_CURSOR_WATCHDOG until the first usable block.
+                            match timeout(STALE_CURSOR_WATCHDOG, stream.next()).await {
+                                Ok(n) => n,
+                                Err(_elapsed) => {
+                                    let had_cursor = !latest_cursor.is_empty();
+                                    if had_cursor && !stale_cursor_fallback_used {
+                                        warn!(
+                                            event = "substreams.stale_cursor_fallback",
+                                            endpoint = %endpoint,
+                                            output_module = %output_module_name,
+                                            start_block = start_block_num,
+                                            stop_block = stop_block_num,
+                                            watchdog_secs = STALE_CURSOR_WATCHDOG.as_secs(),
+                                            stale_cursor_preview = %cursor_preview(&latest_cursor),
+                                            "No blocks received after connect within watchdog window \
+                                             while using a persisted cursor — assuming cursor aged out \
+                                             of the server's fork database, dropping and reconnecting fresh"
+                                        );
+                                        latest_cursor = String::new();
+                                        stale_cursor_fallback_used = true;
+                                    } else {
+                                        // Either already tried the fresh-cursor fallback this session,
+                                        // or we started without a cursor. Treat as a normal connection
+                                        // stall — let backoff + liveness probe handle it.
+                                        warn!(
+                                            event = "substreams.first_block_timeout",
+                                            endpoint = %endpoint,
+                                            output_module = %output_module_name,
+                                            watchdog_secs = STALE_CURSOR_WATCHDOG.as_secs(),
+                                            had_cursor = had_cursor,
+                                            fallback_already_used = stale_cursor_fallback_used,
+                                            "No blocks received after connect within watchdog window; reconnecting"
+                                        );
+                                    }
+                                    encountered_error = true;
+                                    break;
+                                }
+                            }
+                        };
+                        let response = match next {
+                            Some(r) => r,
+                            None => break,
+                        };
                         match process_substreams_response(response, &mut last_progress_report).await {
                             BlockProcessedResult::BlockScopedData(block_scoped_data) => {
+                                got_first_block = true;
+                                stale_cursor_fallback_used = false;
                                 // Reset backoff because we got a good value from the stream
                                 backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
 
@@ -111,6 +181,8 @@ fn stream_blocks(
                                 latest_cursor = cursor;
                             },
                             BlockProcessedResult::BlockUndoSignal(block_undo_signal) => {
+                                got_first_block = true;
+                                stale_cursor_fallback_used = false;
                                 // Reset backoff because we got a good value from the stream
                                 backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
 
@@ -187,6 +259,22 @@ fn is_concurrent_stream_limit(status: &tonic::Status) -> bool {
         && status
             .message()
             .contains("Concurrent stream limit exceeded")
+}
+
+/// Redact all but the first 16 characters of a cursor for logging.
+///
+/// Substreams cursors are opaque blobs that uniquely identify a block + fork state.
+/// We log a prefix so stale-cursor fallback events are auditable in logs (e.g. when
+/// looking up whether a given prod stall recycled its cursor), but not the full
+/// ~220-character string — keeps log lines readable.
+fn cursor_preview(cursor: &str) -> String {
+    if cursor.is_empty() {
+        "<empty>".to_string()
+    } else if cursor.len() <= 16 {
+        format!("{}…(len={})", cursor, cursor.len())
+    } else {
+        format!("{}…(len={})", &cursor[..16], cursor.len())
+    }
 }
 
 enum BlockProcessedResult {
@@ -299,5 +387,40 @@ impl Stream for SubstreamsStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.stream.poll_next_unpin(cx)
+    }
+}
+
+#[cfg(test)]
+mod cursor_preview_tests {
+    use super::cursor_preview;
+
+    #[test]
+    fn empty_cursor_renders_sentinel() {
+        assert_eq!(cursor_preview(""), "<empty>");
+    }
+
+    #[test]
+    fn short_cursor_preserved_with_length() {
+        assert_eq!(cursor_preview("abc"), "abc…(len=3)");
+    }
+
+    #[test]
+    fn long_cursor_truncated_with_length() {
+        // Matches the shape of real Pinax cursors we'd encounter in prod.
+        let full =
+            "sLwuz9N_53_pxBpo1pyHhKWwLpcyB1hsUgLnIBJF09qj8CaQ28ujVGJ2YR-Dwvjzj0HoGln41omcFX559slU6dS_";
+        let out = cursor_preview(full);
+        assert!(out.starts_with("sLwuz9N_53_pxBpo"), "prefix: {out}");
+        assert!(out.contains(&format!("len={}", full.len())), "length annotation: {out}");
+        // Don't leak more than 16 chars of the cursor.
+        assert!(!out.contains("HhKWw"), "leaked beyond 16-char prefix: {out}");
+    }
+
+    #[test]
+    fn cursor_of_exactly_16_chars_still_annotated() {
+        // Defensive: the `len > 16` branch takes care of the common case; this
+        // exercises the `<= 16` branch so regressions in future refactors don't
+        // accidentally panic via out-of-bounds slicing.
+        assert_eq!(cursor_preview("0123456789abcdef"), "0123456789abcdef…(len=16)");
     }
 }
