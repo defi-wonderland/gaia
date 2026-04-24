@@ -589,5 +589,62 @@ describe("EntitySpaceFilterPlugin", () => {
 			expect(typeIdsArg).toBeDefined()
 			expect(typeIdsArg.type.name).toBe("UUIDFilter")
 		})
+
+		// --------------------------------------------------------------------
+		// EntityFilter stripping — typeIds / spaceIds are removed from the
+		// auto-generated `filter:` input because they'd otherwise route
+		// through the per-row computed-column filter and force a seq scan
+		// on `entities`. See the plugin's long-form comment for details.
+		// --------------------------------------------------------------------
+
+		it("EntityFilter does NOT expose `typeIds` (forces use of indexed top-level arg)", async () => {
+			const result = await executeGraphQL(`
+				query IntrospectEntityFilter {
+					__type(name: "EntityFilter") { inputFields { name } }
+				}
+			`)
+			expect(result.errors).toBeUndefined()
+			const fieldNames = (result.data.__type.inputFields as Array<{name: string}>).map((f) => f.name)
+			expect(fieldNames).not.toContain("typeIds")
+		})
+
+		it("EntityFilter does NOT expose `spaceIds` (forces use of indexed top-level arg)", async () => {
+			const result = await executeGraphQL(`
+				query IntrospectEntityFilter {
+					__type(name: "EntityFilter") { inputFields { name } }
+				}
+			`)
+			expect(result.errors).toBeUndefined()
+			const fieldNames = (result.data.__type.inputFields as Array<{name: string}>).map((f) => f.name)
+			expect(fieldNames).not.toContain("spaceIds")
+		})
+
+		it("other EntityFilter fields (e.g. `id`, `and`, `or`) remain", async () => {
+			// Sanity check: the strip is surgical. Generic combinators and
+			// non-computed-column filters should still work.
+			const result = await executeGraphQL(`
+				query IntrospectEntityFilter {
+					__type(name: "EntityFilter") { inputFields { name } }
+				}
+			`)
+			expect(result.errors).toBeUndefined()
+			const fieldNames = (result.data.__type.inputFields as Array<{name: string}>).map((f) => f.name)
+			expect(fieldNames).toContain("id")
+			expect(fieldNames).toContain("and")
+			expect(fieldNames).toContain("or")
+		})
+
+		it("rejects a query using the removed `filter.typeIds` path with a validation error", async () => {
+			// Regression guard: if a future change reintroduces `filter.typeIds`,
+			// this query would succeed (and seq-scan). Expect GraphQL to reject
+			// it at validation.
+			const result = await executeGraphQL(`
+				query WouldSeqScan {
+					entities(filter: {typeIds: {overlaps: ["00000000000000000000000000000000"]}}, first: 1) { id }
+				}
+			`)
+			expect(result.errors).toBeDefined()
+			expect(result.errors?.[0]?.message).toMatch(/typeIds|EntityFilter/i)
+		})
 	})
 })
