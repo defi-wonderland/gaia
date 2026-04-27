@@ -108,6 +108,7 @@ const VALID_PARAMS: Set<string> = new Set([
 	"offset",
 	"include_deleted",
 	"include_non_canonical",
+	"only_canonical",
 	...BOOST_PARAMS,
 ])
 
@@ -217,9 +218,17 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 					name: "include_non_canonical",
 					in: "query",
 					description:
-						"Whether to include entities from spaces outside the canonical graph. Defaults to true (all entities returned). Set to false to restrict results to canonical spaces only. The canonical graph is the trust-based subset of spaces rooted at the configured root space, connected by verified/related/editor/member edges.",
+						"Whether to include entities from spaces outside the canonical graph. Defaults to true (all entities returned). Set to false to restrict results to canonical spaces only. The canonical graph is the trust-based subset of spaces rooted at the configured root space, connected by verified/related/editor/member edges. Mutually exclusive with `only_canonical`.",
 					required: false,
 					schema: {type: "boolean", default: true},
+				},
+				{
+					name: "only_canonical",
+					in: "query",
+					description:
+						"When `true`, restricts results to entities from spaces in the canonical graph. Equivalent to `include_non_canonical=false`. Mutually exclusive with `include_non_canonical` — passing both query parameters returns 400.",
+					required: false,
+					schema: {type: "boolean", default: false},
 				},
 			],
 			responses: {
@@ -353,6 +362,20 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 				const offsetParam = c.req.query("offset")
 				const includeDeletedParam = c.req.query("include_deleted")
 				const includeNonCanonicalParam = c.req.query("include_non_canonical")
+				const onlyCanonicalParam = c.req.query("only_canonical")
+
+				// `include_non_canonical` and `only_canonical` are mutually exclusive —
+				// they're inverse spellings of the same toggle, so allowing both invites
+				// confusion (e.g. include_non_canonical=true & only_canonical=true).
+				if (includeNonCanonicalParam !== undefined && onlyCanonicalParam !== undefined) {
+					return yield* Effect.fail(
+						new SearchValidationError({
+							message:
+								"include_non_canonical and only_canonical cannot both be set — they are mutually exclusive. Use one or the other.",
+							status: 400,
+						}),
+					)
+				}
 
 				// Validate query length
 				const trimmedQuery = query?.trim() ?? ""
@@ -536,8 +559,13 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 				// Parse include_deleted flag (default: false)
 				const includeDeleted = includeDeletedParam === "true"
 
-				// Parse include_non_canonical flag (default: true)
-				const includeNonCanonical = includeNonCanonicalParam !== "false"
+				// Parse canonicality toggle. Two equivalent spellings, only one allowed:
+				//   include_non_canonical=false  ↔  only_canonical=true
+				// Mutual exclusion is enforced above.
+				const includeNonCanonical =
+					onlyCanonicalParam !== undefined
+						? onlyCanonicalParam !== "true"
+						: includeNonCanonicalParam !== "false"
 
 				// Parse optional boost overrides (undocumented — for internal testing)
 				const boosts: BoostOverrides = {}

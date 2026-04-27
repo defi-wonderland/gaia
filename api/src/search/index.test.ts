@@ -499,6 +499,77 @@ describe("Search Router - Integration Tests", () => {
 		})
 	})
 
+	describe("only_canonical / include_non_canonical", () => {
+		it("does not pass include_non_canonical to the search client by default", async () => {
+			const request = new Request("http://localhost/search?query=test")
+			const response = await app.fetch(request)
+
+			expect(response.status).toBe(200)
+			const callArg = (mockSearchClient.search as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+			expect(callArg).not.toHaveProperty("include_non_canonical")
+		})
+
+		it("only_canonical=true restricts results to the canonical graph", async () => {
+			const request = new Request("http://localhost/search?query=test&only_canonical=true")
+			const response = await app.fetch(request)
+
+			expect(response.status).toBe(200)
+			expect(mockSearchClient.search).toHaveBeenCalledWith(
+				expect.objectContaining({
+					include_non_canonical: false,
+				}),
+			)
+		})
+
+		it("only_canonical=false leaves the default (include all spaces) behavior", async () => {
+			const request = new Request("http://localhost/search?query=test&only_canonical=false")
+			const response = await app.fetch(request)
+
+			expect(response.status).toBe(200)
+			const callArg = (mockSearchClient.search as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+			expect(callArg).not.toHaveProperty("include_non_canonical")
+		})
+
+		it("include_non_canonical=false (legacy spelling) still restricts results", async () => {
+			const request = new Request("http://localhost/search?query=test&include_non_canonical=false")
+			const response = await app.fetch(request)
+
+			expect(response.status).toBe(200)
+			expect(mockSearchClient.search).toHaveBeenCalledWith(
+				expect.objectContaining({
+					include_non_canonical: false,
+				}),
+			)
+		})
+
+		it("returns 400 when both include_non_canonical and only_canonical are set", async () => {
+			const request = new Request(
+				"http://localhost/search?query=test&include_non_canonical=true&only_canonical=true",
+			)
+			const response = await app.fetch(request)
+			const result = await response.json()
+
+			expect(response.status).toBe(400)
+			expect(result.error).toBe("Invalid parameter")
+			expect(result.message).toContain("mutually exclusive")
+			expect(mockSearchClient.search).not.toHaveBeenCalled()
+		})
+
+		it("returns 400 when both flags are set, even with conceptually-consistent values", async () => {
+			// include_non_canonical=false and only_canonical=true mean the same thing,
+			// but allowing both still creates ambiguity for callers — disallow.
+			const request = new Request(
+				"http://localhost/search?query=test&include_non_canonical=false&only_canonical=true",
+			)
+			const response = await app.fetch(request)
+			const result = await response.json()
+
+			expect(response.status).toBe(400)
+			expect(result.message).toContain("mutually exclusive")
+			expect(mockSearchClient.search).not.toHaveBeenCalled()
+		})
+	})
+
 	describe("inCanonicalGraph field", () => {
 		it("returns inCanonicalGraph: true when set", async () => {
 			const response: SearchResponse = {
