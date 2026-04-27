@@ -145,7 +145,8 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 		describeRoute({
 			tags: ["Search"],
 			summary: "Search for entities",
-			description: "Search for entities across the Knowledge Graph with optional filters",
+			description:
+				"Search for entities across the Knowledge Graph with optional filters. By default, results include entities from **all** spaces — both inside and outside the canonical graph. To restrict results to the canonical graph only, set `only_canonical=true` (or equivalently, `include_non_canonical=false`).",
 			parameters: [
 				{
 					name: "query",
@@ -218,7 +219,7 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 					name: "include_non_canonical",
 					in: "query",
 					description:
-						"Whether to include entities from spaces outside the canonical graph. Defaults to true (all entities returned). Set to false to restrict results to canonical spaces only. The canonical graph is the trust-based subset of spaces rooted at the configured root space, connected by verified/related/editor/member edges. Mutually exclusive with `only_canonical`.",
+						"Whether to include entities from spaces outside the canonical graph. **Defaults to `true`** — non-canonical results are returned by default. Set to `false` to restrict results to canonical spaces only. The canonical graph is the trust-based subset of spaces rooted at the configured root space, connected by verified/related/editor/member edges. Mutually exclusive with `only_canonical`; passing both query parameters returns 400.",
 					required: false,
 					schema: {type: "boolean", default: true},
 				},
@@ -226,7 +227,7 @@ export function createSearchRouter(searchClient: SearchClient, runtime: AppRunti
 					name: "only_canonical",
 					in: "query",
 					description:
-						"When `true`, restricts results to entities from spaces in the canonical graph. Equivalent to `include_non_canonical=false`. Mutually exclusive with `include_non_canonical` — passing both query parameters returns 400.",
+						"When `true`, restricts results to entities from spaces in the canonical graph. Equivalent to `include_non_canonical=false`. **Defaults to `false`** — non-canonical results are returned by default. Mutually exclusive with `include_non_canonical`; passing both query parameters returns 400.",
 					required: false,
 					schema: {type: "boolean", default: false},
 				},
