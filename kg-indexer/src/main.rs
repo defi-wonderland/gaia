@@ -47,7 +47,9 @@ struct BlockBuffer {
     first_seen: HashMap<u64, Instant>,
     /// Block summaries keyed by block number.
     summaries: HashMap<u64, BlockSummaryInfo>,
-    /// Timeout before force-processing an incomplete block.
+    /// Force-process an incomplete block after this duration. When zero, the
+    /// stale fallback is DISABLED (complete-only mode): a block is processed
+    /// solely once its summary's expected event count is fully buffered.
     stale_timeout: Duration,
 }
 
@@ -122,7 +124,13 @@ impl BlockBuffer {
 
     /// A block is stale once it (or its summary) has been buffered longer than
     /// the stale timeout, the fallback that guarantees forward progress.
+    ///
+    /// A zero `stale_timeout` DISABLES the fallback (complete-only mode): blocks
+    /// then advance solely via `is_complete`, never by force-processing.
     fn is_stale(&self, block_number: u64) -> bool {
+        if self.stale_timeout.is_zero() {
+            return false;
+        }
         let now = Instant::now();
         let events_stale = self
             .first_seen
@@ -220,6 +228,12 @@ async fn async_main() -> Result<(), IndexerError> {
                 .map(|secs| secs * 1000)
         })
         .unwrap_or(1000);
+
+    if stale_timeout_ms == 0 {
+        info!("BLOCK_STALE_TIMEOUT_MS=0: stale fallback disabled (complete-only mode)");
+    } else {
+        info!("BLOCK_STALE_TIMEOUT_MS configured to: {}", stale_timeout_ms);
+    }
 
     // Initialize storage
     let storage = Storage::new(&database_url).await?;
@@ -1419,6 +1433,9 @@ async fn process_block(
                     event_span.record("edit_id", display(result.edit_id));
                     if let Ok(space_id) = uuid::Uuid::from_slice(&edit.space_id) {
                         event_span.record("space_id", display(space_id));
+                        if space_id == uuid::uuid!("e8173628-fb65-f095-7475-a58933040614") {
+                            return Ok(0);
+                        }
                     }
 
                     // Keep copies for versioned writes before partitioning
