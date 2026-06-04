@@ -83,7 +83,7 @@ BEGIN
        'SELECT e.* FROM ('
     || '  SELECT DISTINCT ON (v.entity_id) v.entity_id, ' || sort_expr || ' AS sort_value'
     || '  FROM "values" v'
-    || '  WHERE v.property_id = ' || quote_literal(property_id) || ' AND ' || null_pred || space_pred || type_pred
+    || '  WHERE v.property_id = ' || quote_nullable(property_id) || ' AND ' || null_pred || space_pred || type_pred
     || '  ORDER BY v.entity_id, ' || sort_expr || ' ' || dir
     || ') sub JOIN entities e ON e.id = sub.entity_id'
     || ' ORDER BY sub.sort_value ' || dir || ', e.id';
