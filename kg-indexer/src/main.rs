@@ -1032,11 +1032,20 @@ async fn process_message(
             storage.insert_values(&set_values, &mut tx).await?;
             storage.delete_values(&delete_value_ids, &mut tx).await?;
             storage.insert_relations(&set_relations, &mut tx).await?;
-            storage.update_relations(&update_relations, &mut tx).await?;
-            storage
+            // Capture post-mutation relation state from the live UPDATEs' RETURNING so
+            // insert_relation_versions can version update/unset ops without re-reading.
+            let updated_rows = storage.update_relations(&update_relations, &mut tx).await?;
+            let unset_rows = storage
                 .unset_relation_fields(&unset_relations, &mut tx)
                 .await?;
             storage.delete_relations(&delete_relations, &mut tx).await?;
+
+            let relation_post_mutation: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), _> =
+                updated_rows
+                    .into_iter()
+                    .chain(unset_rows)
+                    .map(|r| ((r.id, r.space_id), r))
+                    .collect();
 
             // Versioned writes (temporal tables)
             // Only write versions if this edit hasn't been processed before (idempotency)
@@ -1059,7 +1068,12 @@ async fn process_message(
                         .insert_value_versions(&values_for_versioning, version_key, &mut tx)
                         .await?;
                     storage
-                        .insert_relation_versions(&relations_for_versioning, version_key, &mut tx)
+                        .insert_relation_versions(
+                            &relations_for_versioning,
+                            version_key,
+                            &relation_post_mutation,
+                            &mut tx,
+                        )
                         .await?;
                 }
             }
@@ -1440,11 +1454,20 @@ async fn process_block(
                     storage.insert_values(&set_values, &mut tx).await?;
                     storage.delete_values(&delete_value_ids, &mut tx).await?;
                     storage.insert_relations(&set_relations, &mut tx).await?;
-                    storage.update_relations(&update_relations, &mut tx).await?;
-                    storage
+                    let updated_rows = storage.update_relations(&update_relations, &mut tx).await?;
+                    let unset_rows = storage
                         .unset_relation_fields(&unset_relations, &mut tx)
                         .await?;
                     storage.delete_relations(&delete_relations, &mut tx).await?;
+
+                    let relation_post_mutation: std::collections::HashMap<
+                        (uuid::Uuid, uuid::Uuid),
+                        _,
+                    > = updated_rows
+                        .into_iter()
+                        .chain(unset_rows)
+                        .map(|r| ((r.id, r.space_id), r))
+                        .collect();
 
                     // Versioned writes (temporal tables)
                     // Only write versions if this edit hasn't been processed before (idempotency)
@@ -1470,6 +1493,7 @@ async fn process_block(
                                 .insert_relation_versions(
                                     &relations_for_versioning,
                                     version_key,
+                                    &relation_post_mutation,
                                     &mut tx,
                                 )
                                 .await?;
