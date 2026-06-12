@@ -1,8 +1,6 @@
-# cargo-deny configuration — supply-chain policy for the Rust workspace.
-# Run locally / CI: `cargo deny check advisories bans sources`.
-# `licenses` is configured below but NOT yet enforced — a bare `cargo deny check`
-# will fail on first-party "unlicensed" crates until they're marked
-# `publish = false` (tracked follow-up; see the note in [licenses]).
+# cargo-deny configuration — supply-chain advisories/bans/sources for the Rust workspace.
+# Run locally and in CI: `cargo deny check advisories bans sources`
+# (.github/workflows/cargo-deny.yml)
 
 [graph]
 # Check the default feature set / host target — i.e. what actually ships. Deps
@@ -42,34 +40,6 @@ ignore = [
 # E0119) — surfaced as warnings to start; tighten to "deny" once cleaned up.
 multiple-versions = "warn"
 wildcards = "warn"
-
-[licenses]
-version = 2
-confidence-threshold = 0.8
-# NOTE: the licenses check is configured here but NOT yet enforced in CI
-# (the workflow runs `advisories bans sources`). Enforcing it requires marking
-# the first-party workspace crates `publish = false` (or adding `license`
-# fields) so they aren't flagged "unlicensed" — tracked as a follow-up.
-# `private.ignore` only skips crates already marked `publish = false`.
-private = { ignore = true }
-# Permissive licenses present in the dependency graph. Add here (with a note)
-# rather than disabling the check when a new license appears.
-allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "MPL-2.0",
-    "Zlib",
-    "CC0-1.0",
-    "BSL-1.0",
-    "OpenSSL",
-    "CDLA-Permissive-2.0",
-]
 
 [sources]
 unknown-registry = "deny"

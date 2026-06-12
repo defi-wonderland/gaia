@@ -45,7 +45,5 @@ jobs:
         with:
           tool: cargo-deny
 
-      # `licenses` is intentionally omitted for now — see the note in deny.toml
-      # (workspace crates need `publish = false` before it can pass).
       - name: Check advisories, bans, sources
         run: cargo deny check advisories bans sources
