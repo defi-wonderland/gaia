@@ -208,6 +208,12 @@ pub struct ActionSummary {
     /// Target address (hex-encoded, for member/editor actions).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_address: Option<String>,
+    /// Human-readable display name of the target user (best-effort, from the KG
+    /// values table via their personal space). Currently resolved for
+    /// `add_editor` / `add_member` actions; `None` if the user has no personal
+    /// space or no name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
     /// Target space ID (for subspace actions).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_space_id: Option<String>,
@@ -2338,6 +2344,38 @@ mod tests {
         let json = serde_json::to_value(&event.payload).expect("should serialize");
         assert!(json.get("bounty_name").is_none());
         assert!(json.get("curator_name").is_none());
+    }
+
+    #[test]
+    fn test_action_summary_target_name_serialization() {
+        // Omitted when unset (the default after action_to_summary; enrichment is DB-side).
+        let unset = ActionSummary {
+            action_type: "add_editor".to_string(),
+            target_address: Some("0xabc".to_string()),
+            ..ActionSummary::default()
+        };
+        let json = serde_json::to_value(&unset).expect("should serialize");
+        assert_eq!(
+            json.get("type").and_then(|v| v.as_str()),
+            Some("add_editor")
+        );
+        assert!(
+            json.get("target_name").is_none(),
+            "target_name must be omitted when None"
+        );
+
+        // Serialized when the enrichment resolved a name.
+        let enriched = ActionSummary {
+            action_type: "add_member".to_string(),
+            target_address: Some("0xabc".to_string()),
+            target_name: Some("Alice".to_string()),
+            ..ActionSummary::default()
+        };
+        let json = serde_json::to_value(&enriched).expect("should serialize");
+        assert_eq!(
+            json.get("target_name").and_then(|v| v.as_str()),
+            Some("Alice")
+        );
     }
 
     // -----------------------------------------------------------------------

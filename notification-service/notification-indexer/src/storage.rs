@@ -538,6 +538,41 @@ impl Storage {
         .flatten()
     }
 
+    /// Look up a user's display name from their wallet address (best-effort).
+    ///
+    /// Resolves the user's personal space by address (`spaces.address`, stored
+    /// `0x`-prefixed lowercase, `type = 'Personal'`) and returns that space
+    /// entity's NAME value — mirroring the API's `getProfileByAddress`. Used to
+    /// attach the editor/member name to `add_editor` / `add_member` proposal
+    /// notifications. Returns `None` if the address has no personal space, no
+    /// name, or the query fails.
+    pub async fn lookup_name_by_address(&self, address: &str) -> Option<String> {
+        // `target_address` is bare hex (no `0x`); `spaces.address` is `0x`-prefixed
+        // lowercase. Normalize so the comparison matches regardless of input form.
+        let hex = address.strip_prefix("0x").unwrap_or(address).to_lowercase();
+        let normalized = format!("0x{hex}");
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT v.text
+            FROM spaces s
+            JOIN "values" v
+              ON v.entity_id = s.id
+             AND v.space_id = s.id
+             AND v.property_id = $2
+             AND v.text IS NOT NULL
+            WHERE LOWER(s.address) = $1
+              AND s.type = 'Personal'
+            LIMIT 1
+            "#,
+        )
+        .bind(normalized)
+        .bind(ids::name_property())
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// Look up the human-readable name for a proposal from the proposals table.
     pub async fn lookup_proposal_name(&self, proposal_id: Uuid) -> Option<String> {
         sqlx::query_scalar::<_, String>(

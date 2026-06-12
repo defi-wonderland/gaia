@@ -1373,6 +1373,19 @@ async fn enrich_payload(
                 }
             }
 
+            // Target display name for add_editor / add_member actions — resolve the
+            // added user's name from their wallet address (best-effort).
+            if let Some(actions) = gov.actions.as_mut() {
+                for action in actions.iter_mut() {
+                    if action.action_type != "add_editor" && action.action_type != "add_member" {
+                        continue;
+                    }
+                    if let Some(address) = action.target_address.clone() {
+                        action.target_name = storage.lookup_name_by_address(&address).await;
+                    }
+                }
+            }
+
             // Vote tallies (proposal_voted events only)
             if event.event_type == NotificationEventType::ProposalVoted {
                 if let Ok(pid) = uuid::Uuid::parse_str(&gov.proposal_id) {

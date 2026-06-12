@@ -89,7 +89,8 @@ A new proposal was created in the space.
   "actions": [
     {
       "type": "add_member",
-      "target_address": "0x1234..."
+      "target_address": "0x1234...",
+      "target_name": "Alice"
     }
   ],
   "settings": {
@@ -300,11 +301,15 @@ Same structure as `bounty_allocated`.
 
 | Action type | Fields | Description |
 |---|---|---|
-| `add_member` | `target_address` | Add a member to the space |
+| `add_member` | `target_address`, `target_name`? | Add a member to the space |
 | `remove_member` | `target_address` | Remove a member |
-| `add_editor` | `target_address` | Add an editor |
+| `add_editor` | `target_address`, `target_name`? | Add an editor |
 | `remove_editor` | `target_address` | Remove an editor |
 | `unflag_editor` | `target_address` | Unflag a flagged editor |
+
+`target_name` is the added user's display name, resolved best-effort from their
+personal space. It is present only for `add_member` / `add_editor` and omitted
+when the user has no personal space or name.
 
 **Content actions:**
 
