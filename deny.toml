@@ -1,0 +1,70 @@
+# cargo-deny configuration — supply-chain policy for the Rust workspace.
+# Run locally: `cargo deny check`
+# CI: .github/workflows/cargo-deny.yml (advisories + bans + sources + licenses).
+
+[graph]
+# Check the default feature set / host target — i.e. what actually ships. Deps
+# behind disabled features (e.g. rsa, quinn-proto) therefore aren't flagged.
+all-features = false
+
+[advisories]
+version = 2
+# Baseline of advisories accepted as of this PR. RUSTSEC *vulnerabilities* are NOT
+# in this list, so a newly-introduced vulnerable crate still fails CI — which is
+# the point. These are pre-existing unmaintained/unsound/no-fix advisories on
+# transitive deps; revisit as the parents upgrade.
+ignore = [
+    # No upstream fix; rsa is feature-gated / not in the default build graph.
+    "RUSTSEC-2023-0071", # rsa — Marvin timing side-channel
+    # Unmaintained (transitive, no action available without upstreams moving):
+    "RUSTSEC-2021-0141", # dotenv unmaintained (use dotenvy — follow-up)
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained
+    "RUSTSEC-2024-0384", # instant unmaintained
+    "RUSTSEC-2024-0388", # derivative unmaintained
+    "RUSTSEC-2024-0436", # paste unmaintained
+    "RUSTSEC-2025-0012", # backoff unmaintained
+    "RUSTSEC-2025-0134", # rustls-pemfile unmaintained
+    "RUSTSEC-2026-0173", # rustls-pemfile unmaintained
+    # Unsound (transitive, low-severity):
+    "RUSTSEC-2026-0002", # lru — IterMut Stacked-Borrows unsoundness
+    "RUSTSEC-2026-0012", # keccak unsound
+    "RUSTSEC-2026-0097", # rand unsound (custom-logger edge case)
+]
+
+[bans]
+# Duplicate/incompatible version pairings (the class behind the time/sentry-types
+# E0119) — surfaced as warnings to start; tighten to "deny" once cleaned up.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# NOTE: the licenses check is configured here but NOT yet enforced in CI
+# (the workflow runs `advisories bans sources`). Enforcing it requires marking
+# the first-party workspace crates `publish = false` (or adding `license`
+# fields) so they aren't flagged "unlicensed" — tracked as a follow-up.
+# `private.ignore` only skips crates already marked `publish = false`.
+private = { ignore = true }
+# Permissive licenses present in the dependency graph. Add here (with a note)
+# rather than disabling the check when a new license appears.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "Zlib",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

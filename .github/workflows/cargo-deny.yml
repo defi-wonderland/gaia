@@ -1,0 +1,45 @@
+name: Cargo Deny (supply-chain)
+
+# Scans the workspace lockfile for known-vulnerable / yanked crates (RUSTSEC),
+# duplicate/incompatible version pairings, and disallowed sources. Runs on
+# dependency changes AND on a daily schedule, so a newly-published advisory on
+# an unchanged dependency is caught even without a commit.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/cargo-deny.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/cargo-deny.yml'
+  schedule:
+    # 09:00 UTC daily — catch new RUSTSEC advisories on unchanged deps.
+    - cron: '0 9 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      # `licenses` is intentionally omitted for now — see the note in deny.toml
+      # (workspace crates need `publish = false` before it can pass).
+      - name: Check advisories, bans, sources
+        run: cargo deny check advisories bans sources
