@@ -1,6 +1,7 @@
 use hermes_instrumentation::info;
 use sqlx::{postgres::PgPoolOptions, Postgres, QueryBuilder};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -303,13 +304,17 @@ impl Storage {
         Ok(())
     }
 
+    /// Apply relation field updates to the live `relations` table and RETURN the
+    /// full post-mutation rows. The returned rows are the authoritative merged
+    /// state — `insert_relation_versions` uses them to write update version rows
+    /// WITHOUT a separate read on the write path.
     pub async fn update_relations(
         &self,
         relations: &[UpdateRelationItem],
         tx: &mut sqlx::Transaction<'_, Postgres>,
-    ) -> Result<(), IndexerError> {
+    ) -> Result<Vec<RelationStateRow>, IndexerError> {
         if relations.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
@@ -339,21 +344,30 @@ impl Storage {
 
         query_builder.push(
             ") AS v(id, from_space_id, from_version_id, to_space_id, to_version_id, position, verified)
-             WHERE relations.id = v.id AND relations.is_system = false",
+             WHERE relations.id = v.id AND relations.is_system = false
+             RETURNING relations.id, relations.entity_id, relations.type_id,
+                       relations.from_entity_id, relations.from_space_id,
+                       relations.to_entity_id, relations.to_space_id,
+                       relations.position, relations.space_id, relations.verified",
         );
 
-        query_builder.build().execute(&mut **tx).await?;
+        let rows = query_builder
+            .build_query_as::<RelationStateRow>()
+            .fetch_all(&mut **tx)
+            .await?;
 
-        Ok(())
+        Ok(rows)
     }
 
+    /// Apply relation field unsets to the live `relations` table and RETURN the
+    /// full post-mutation rows (see `update_relations` — same no-read rationale).
     pub async fn unset_relation_fields(
         &self,
         relations: &[UnsetRelationItem],
         tx: &mut sqlx::Transaction<'_, Postgres>,
-    ) -> Result<(), IndexerError> {
+    ) -> Result<Vec<RelationStateRow>, IndexerError> {
         if relations.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
@@ -380,12 +394,19 @@ impl Storage {
         query_builder.push(
             ") AS v(id, unset_from_space_id, unset_from_version_id, unset_to_space_id,
                    unset_to_version_id, unset_position, unset_verified)
-             WHERE relations.id = v.id AND relations.is_system = false",
+             WHERE relations.id = v.id AND relations.is_system = false
+             RETURNING relations.id, relations.entity_id, relations.type_id,
+                       relations.from_entity_id, relations.from_space_id,
+                       relations.to_entity_id, relations.to_space_id,
+                       relations.position, relations.space_id, relations.verified",
         );
 
-        query_builder.build().execute(&mut **tx).await?;
+        let rows = query_builder
+            .build_query_as::<RelationStateRow>()
+            .fetch_all(&mut **tx)
+            .await?;
 
-        Ok(())
+        Ok(rows)
     }
 
     pub async fn delete_relations(
@@ -1580,6 +1601,7 @@ impl Storage {
         &self,
         relations: &[RelationOp],
         version_key: i64,
+        post_mutation: &HashMap<(Uuid, Uuid), RelationStateRow>,
         tx: &mut sqlx::Transaction<'_, Postgres>,
     ) -> Result<(), IndexerError> {
         if relations.is_empty() {
@@ -1609,49 +1631,105 @@ impl Storage {
         .execute(&mut **tx)
         .await?;
 
-        // Filter to only Create operations for inserting new versions
-        let creates: Vec<&SetRelationItem> = relations
-            .iter()
-            .filter_map(|r| match r {
-                RelationOp::Create(item) => Some(item),
-                _ => None,
-            })
-            .collect();
+        // Build the rows to insert. Three sources:
+        //
+        //   - Create ops: synthesize from the SetRelationItem in-memory.
+        //   - Update / Unset ops: use the post-mutation state captured from the
+        //     live `relations` UPDATE's RETURNING (passed in by the caller) and
+        //     attach the op's context columns. NO read happens here — the row was
+        //     already materialized by update_relations / unset_relation_fields in
+        //     the same tx. Without a version row, an update would close the open
+        //     row but write no successor, so queries at `version_key` would treat
+        //     the relation as deleted.
+        //   - Delete ops: skip — closing valid_to_key already represents the
+        //     deletion in the temporal table.
+        let row_from_state =
+            |state: &RelationStateRow, item_ctx: (Option<Uuid>, Option<Uuid>)| VersionRow {
+                relation_id: state.id,
+                entity_id: state.entity_id,
+                type_id: state.type_id,
+                from_id: state.from_entity_id,
+                from_space_id: state.from_space_id,
+                to_id: state.to_entity_id,
+                to_space_id: state.to_space_id,
+                position: state.position.clone(),
+                space_id: state.space_id,
+                verified: state.verified,
+                context_root_id: item_ctx.0,
+                context_edge_type_id: item_ctx.1,
+            };
 
-        if creates.is_empty() {
+        let mut rows: Vec<VersionRow> = Vec::new();
+
+        for r in relations {
+            match r {
+                RelationOp::Create(item) => rows.push(VersionRow {
+                    relation_id: item.id,
+                    entity_id: item.entity_id,
+                    type_id: item.type_id,
+                    from_id: item.from_id,
+                    from_space_id: item.from_space_id.as_ref().and_then(|s| s.parse().ok()),
+                    to_id: item.to_id,
+                    to_space_id: item.to_space_id.as_ref().and_then(|s| s.parse().ok()),
+                    position: item.position.clone(),
+                    space_id: item.space_id,
+                    verified: item.verified,
+                    context_root_id: item.context_root_id,
+                    context_edge_type_id: item.context_edge_type_id,
+                }),
+                RelationOp::Update(item) => {
+                    if let Some(state) = post_mutation.get(&(item.id, item.space_id)) {
+                        rows.push(row_from_state(
+                            state,
+                            (item.context_root_id, item.context_edge_type_id),
+                        ));
+                    }
+                }
+                RelationOp::Unset(item) => {
+                    if let Some(state) = post_mutation.get(&(item.id, item.space_id)) {
+                        rows.push(row_from_state(
+                            state,
+                            (item.context_root_id, item.context_edge_type_id),
+                        ));
+                    }
+                }
+                RelationOp::Delete(_) => {}
+            }
+        }
+
+        if rows.is_empty() {
             return Ok(());
         }
 
         // Prepare arrays for bulk insert
-        let mut ids = Vec::with_capacity(creates.len());
-        let mut r_relation_ids = Vec::with_capacity(creates.len());
-        let mut r_entity_ids = Vec::with_capacity(creates.len());
-        let mut r_type_ids = Vec::with_capacity(creates.len());
-        let mut r_from_entity_ids = Vec::with_capacity(creates.len());
-        let mut r_from_space_ids: Vec<Option<Uuid>> = Vec::with_capacity(creates.len());
-        let mut r_to_entity_ids = Vec::with_capacity(creates.len());
-        let mut r_to_space_ids: Vec<Option<Uuid>> = Vec::with_capacity(creates.len());
-        let mut r_positions = Vec::with_capacity(creates.len());
-        let mut r_space_ids = Vec::with_capacity(creates.len());
-        let mut r_verified = Vec::with_capacity(creates.len());
-        let mut valid_from_keys = Vec::with_capacity(creates.len());
-        let mut context_root_ids = Vec::with_capacity(creates.len());
-        let mut context_edge_type_ids = Vec::with_capacity(creates.len());
+        let mut ids = Vec::with_capacity(rows.len());
+        let mut r_relation_ids = Vec::with_capacity(rows.len());
+        let mut r_entity_ids = Vec::with_capacity(rows.len());
+        let mut r_type_ids = Vec::with_capacity(rows.len());
+        let mut r_from_entity_ids = Vec::with_capacity(rows.len());
+        let mut r_from_space_ids: Vec<Option<Uuid>> = Vec::with_capacity(rows.len());
+        let mut r_to_entity_ids = Vec::with_capacity(rows.len());
+        let mut r_to_space_ids: Vec<Option<Uuid>> = Vec::with_capacity(rows.len());
+        let mut r_positions = Vec::with_capacity(rows.len());
+        let mut r_space_ids = Vec::with_capacity(rows.len());
+        let mut r_verified = Vec::with_capacity(rows.len());
+        let mut valid_from_keys = Vec::with_capacity(rows.len());
+        let mut context_root_ids = Vec::with_capacity(rows.len());
+        let mut context_edge_type_ids = Vec::with_capacity(rows.len());
 
-        for r in &creates {
-            // Derive deterministic ID for idempotency
+        for r in &rows {
             ids.push(Self::derive_relation_version_id(
-                &r.id,
+                &r.relation_id,
                 &r.space_id,
                 version_key,
             ));
-            r_relation_ids.push(r.id);
+            r_relation_ids.push(r.relation_id);
             r_entity_ids.push(r.entity_id);
             r_type_ids.push(r.type_id);
             r_from_entity_ids.push(r.from_id);
-            r_from_space_ids.push(r.from_space_id.as_ref().and_then(|s| s.parse().ok()));
+            r_from_space_ids.push(r.from_space_id);
             r_to_entity_ids.push(r.to_id);
-            r_to_space_ids.push(r.to_space_id.as_ref().and_then(|s| s.parse().ok()));
+            r_to_space_ids.push(r.to_space_id);
             r_positions.push(r.position.as_deref());
             r_space_ids.push(r.space_id);
             r_verified.push(r.verified);
@@ -1694,4 +1772,37 @@ impl Storage {
 
         Ok(())
     }
+}
+
+/// Post-mutation relation state, returned by `update_relations` /
+/// `unset_relation_fields` via RETURNING and consumed by
+/// `insert_relation_versions` to write update version rows without a read.
+#[derive(sqlx::FromRow)]
+pub struct RelationStateRow {
+    pub id: Uuid,
+    pub entity_id: Uuid,
+    pub type_id: Uuid,
+    pub from_entity_id: Uuid,
+    pub from_space_id: Option<Uuid>,
+    pub to_entity_id: Uuid,
+    pub to_space_id: Option<Uuid>,
+    pub position: Option<String>,
+    pub space_id: Uuid,
+    pub verified: Option<bool>,
+}
+
+/// Internal helper struct used by `insert_relation_versions`.
+struct VersionRow {
+    relation_id: Uuid,
+    entity_id: Uuid,
+    type_id: Uuid,
+    from_id: Uuid,
+    from_space_id: Option<Uuid>,
+    to_id: Uuid,
+    to_space_id: Option<Uuid>,
+    position: Option<String>,
+    space_id: Uuid,
+    verified: Option<bool>,
+    context_root_id: Option<Uuid>,
+    context_edge_type_id: Option<Uuid>,
 }
