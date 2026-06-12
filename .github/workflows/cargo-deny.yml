@@ -27,15 +27,21 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Least privilege: this is a read-only check; it never writes to the repo.
+permissions:
+  contents: read
+
 jobs:
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      # Third-party actions pinned to immutable commit SHAs (Dependabot's
+      # github-actions ecosystem keeps the pins + version comments fresh).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2
         with:
           tool: cargo-deny
 

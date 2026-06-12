@@ -1,6 +1,8 @@
 # cargo-deny configuration — supply-chain policy for the Rust workspace.
-# Run locally: `cargo deny check`
-# CI: .github/workflows/cargo-deny.yml (advisories + bans + sources + licenses).
+# Run locally / CI: `cargo deny check advisories bans sources`.
+# `licenses` is configured below but NOT yet enforced — a bare `cargo deny check`
+# will fail on first-party "unlicensed" crates until they're marked
+# `publish = false` (tracked follow-up; see the note in [licenses]).
 
 [graph]
 # Check the default feature set / host target — i.e. what actually ships. Deps
