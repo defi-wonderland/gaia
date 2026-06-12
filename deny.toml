@@ -9,13 +9,17 @@ all-features = false
 
 [advisories]
 version = 2
-# Baseline of advisories accepted as of this PR. RUSTSEC *vulnerabilities* are NOT
-# in this list, so a newly-introduced vulnerable crate still fails CI — which is
-# the point. These are pre-existing unmaintained/unsound/no-fix advisories on
-# transitive deps; revisit as the parents upgrade.
+# Baseline of advisories accepted as of this PR. Crucially, NO RUSTSEC
+# *vulnerability* is ignored here — only pre-existing unmaintained/unsound
+# advisories on transitive deps — so a newly-introduced vulnerable crate still
+# fails CI. Revisit as the parents upgrade.
+#
+# RUSTSEC-2023-0071 (rsa — Marvin timing side-channel) is deliberately NOT
+# ignored: it has no upstream fix, but `rsa` is feature-gated out of the default
+# build graph, so cargo-deny doesn't flag it today. Leaving it un-ignored means
+# that if `rsa` ever enters the shipped graph, CI fails and forces a fresh
+# decision — rather than a global ignore silently masking a no-fix vulnerability.
 ignore = [
-    # No upstream fix; rsa is feature-gated / not in the default build graph.
-    "RUSTSEC-2023-0071", # rsa — Marvin timing side-channel
     # Unmaintained (transitive, no action available without upstreams moving):
     "RUSTSEC-2021-0141", # dotenv unmaintained (use dotenvy — follow-up)
     "RUSTSEC-2024-0370", # proc-macro-error unmaintained
