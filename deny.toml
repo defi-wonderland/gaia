@@ -22,7 +22,6 @@ version = 2
 ignore = [
     # Unmaintained (transitive, no action available without upstreams moving):
     "RUSTSEC-2021-0141", # dotenv unmaintained (use dotenvy — follow-up)
-    "RUSTSEC-2024-0370", # proc-macro-error unmaintained
     "RUSTSEC-2024-0384", # instant unmaintained
     "RUSTSEC-2024-0388", # derivative unmaintained
     "RUSTSEC-2024-0436", # paste unmaintained
