@@ -613,6 +613,13 @@ function extractAffectedEntities(db: Database, ops: Op[]): Effect.Effect<Normali
 }
 
 /**
+ * Embedding sub-type names, indexed by the GRC-20 `EmbeddingSubType` enum value.
+ * Mirrors the `format!("{:?}", sub_type)` the kg-indexer writes to the
+ * `embedding` jsonb column, so proposal and snapshot representations match.
+ */
+const EMBEDDING_SUB_TYPE_NAMES = ["Float32", "Int8", "Binary"] as const
+
+/**
  * Decode a `big`-variant decimal mantissa (two's-complement, big-endian) to a
  * bigint. This is the standard arbitrary-precision integer byte encoding; the
  * SDK stores the producer's bytes verbatim.
@@ -730,9 +737,18 @@ export function propertyValueToVersionedValue(
 		case "embedding": {
 			// GRC-20 decodes embeddings as {subType, dims, data: Uint8Array} — there
 			// is no `value` field, so reading `value.value` silently dropped the
-			// vector. Preserve the raw bytes as base64 so the diff reflects the change.
-			const emb = value as unknown as {data?: Uint8Array}
-			result.embedding = emb.data ? Buffer.from(emb.data).toString("base64") : null
+			// vector. Mirror exactly what the kg-indexer persists to the `embedding`
+			// jsonb column ({sub_type, dims, data: hex}; see kg-indexer
+			// handlers/edits.rs) so a proposal diff matches the snapshot/live state
+			// instead of showing a spurious change.
+			const emb = value as unknown as {subType?: number; dims?: number; data?: Uint8Array}
+			result.embedding = emb.data
+				? {
+						sub_type: EMBEDDING_SUB_TYPE_NAMES[emb.subType ?? -1] ?? String(emb.subType),
+						dims: emb.dims,
+						data: Buffer.from(emb.data).toString("hex"),
+					}
+				: null
 			break
 		}
 		default:

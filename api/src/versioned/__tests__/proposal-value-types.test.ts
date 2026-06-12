@@ -215,14 +215,35 @@ describe("proposal value path — INT64 precision", () => {
 
 // -----------------------------------------------------------------------------
 // EMBEDDING: GRC-20 decodes embeddings as {subType, dims, data}, with no
-// `value` field. The proposal path must not silently drop the content.
+// `value` field — reading `value.value` silently dropped the content. The
+// proposal path must mirror the kg-indexer's stored shape ({sub_type, dims,
+// data: hex}) so a proposal diff matches the snapshot/live representation
+// instead of showing a spurious or quote-wrapped change.
 // -----------------------------------------------------------------------------
 
 describe("proposal value path — EMBEDDING", () => {
-	it("does not silently drop embedding content", () => {
-		const vv = toVV({type: "embedding", subType: 0, dims: 2, data: Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0])})
-		expect(vv.embedding).not.toBeUndefined()
-		expect(vv.embedding).not.toBeNull()
+	const data = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8])
+
+	it("mirrors the kg-indexer snapshot shape: {sub_type, dims, data: hex}", () => {
+		const vv = toVV({type: "embedding", subType: 0, dims: 2, data})
+		expect(vv.embedding).toEqual({sub_type: "Float32", dims: 2, data: "0102030405060708"})
+	})
+
+	it("does not diff against the snapshot representation regardless of JSONB key order", () => {
+		const proposed = toVV({type: "embedding", subType: 0, dims: 2, data})
+		// The snapshot path returns the JSONB object with keys in an arbitrary order.
+		const snapshot: VersionedValue = {
+			propertyId: proposed.propertyId,
+			spaceId: proposed.spaceId,
+			embedding: {data: "0102030405060708", sub_type: "Float32", dims: 2},
+		}
+		expect(run(diffValues([snapshot], [proposed]))).toEqual([])
+	})
+
+	it("serializes without extra quote-wrapping", () => {
+		const after = addAfter({type: "embedding", subType: 1, dims: 3, data: Uint8Array.from([10, 20, 30])})
+		expect(after?.startsWith('"')).toBe(false)
+		expect(after).toContain("Int8")
 	})
 })
 
