@@ -270,6 +270,35 @@ export const EntitySpaceFilterPlugin = (builder: any) => {
 			},
 		})
 	})
+
+	// ========================================================================
+	// Remove `typeIds` / `spaceIds` from the auto-generated `filter:` input.
+	// ========================================================================
+	//
+	// PostGraphile's connection-filter plugin exposes these computed-column
+	// fields on `EntityFilter` (nested under the `filter:` arg). Every
+	// operator used there evaluates `entities_type_ids(e)` /
+	// `entities_space_ids(e)` per row — a function that itself joins
+	// relations × entities. On a 2M-row table that's a full sequential scan
+	// with a per-row function call — it exceeds the 60 s statement_timeout
+	// and produces nginx 504 (reported with `filter: {typeIds: {overlaps: [...]}}`).
+	//
+	// The custom top-level `typeIds:` and `spaceIds:` arguments (added above)
+	// rewrite to indexed EXISTS predicates on `relations_to_entity_id_idx`
+	// and run sub-millisecond at full prod scale (measured: 1.0 ms end-to-end
+	// for the offending query shape). This hook removes the slow `filter.*`
+	// path to force callers onto the fast top-level args.
+	//
+	// Breaking for any caller using `filter: {typeIds: …}` or
+	// `filter: {spaceIds: …}`. Migration:
+	//   `entities(filter: {typeIds: {in: $ids}})`        → `entities(typeIds: {in: $ids})`
+	//   `entities(filter: {typeIds: {overlaps: $ids}})`  → `entities(typeIds: {in: $ids})`  (same semantics)
+	//   `entities(filter: {typeIds: {anyEqualTo: $id}})` → `entities(typeId: $id)`
+	builder.hook("GraphQLInputObjectType:fields", (fields: any, _build: any, context: any) => {
+		if (context.Self?.name !== "EntityFilter") return fields
+		const {typeIds: _typeIds, spaceIds: _spaceIds, ...rest} = fields
+		return rest
+	})
 }
 
 export default EntitySpaceFilterPlugin
