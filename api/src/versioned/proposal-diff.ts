@@ -24,7 +24,7 @@
  * 3. Track entity/relation deletion state
  */
 
-import {decodeEditAuto, type Id, type Op} from "@geoprotocol/grc-20"
+import {type DecimalMantissa, decodeEditAuto, type Id, type Op} from "@geoprotocol/grc-20"
 import {SystemIds} from "@graphprotocol/grc-20"
 import {sql} from "drizzle-orm"
 import type {NodePgDatabase} from "drizzle-orm/node-postgres"
@@ -627,6 +627,55 @@ export function extractAffectedEntities(db: Database, ops: Op[]): Effect.Effect<
 }
 
 /**
+ * Embedding sub-type names, indexed by the GRC-20 `EmbeddingSubType` enum value.
+ * Mirrors the `format!("{:?}", sub_type)` the kg-indexer writes to the
+ * `embedding` jsonb column, so proposal and snapshot representations match.
+ */
+const EMBEDDING_SUB_TYPE_NAMES = ["Float32", "Int8", "Binary"] as const
+
+/**
+ * Decode a `big`-variant decimal mantissa (two's-complement, big-endian) to a
+ * bigint. This is the standard arbitrary-precision integer byte encoding; the
+ * SDK stores the producer's bytes verbatim.
+ */
+function bytesToBigInt(bytes: Uint8Array): bigint {
+	if (bytes.length === 0) return 0n
+	let result = 0n
+	for (const byte of bytes) {
+		result = (result << 8n) | BigInt(byte)
+	}
+	// If the high bit is set, the value is negative in two's complement.
+	if ((bytes[0] ?? 0) & 0x80) {
+		result -= 1n << (BigInt(bytes.length) * 8n)
+	}
+	return result
+}
+
+/**
+ * Render a decimal `mantissa × 10^exponent` as a precise string, handling sign,
+ * trailing zeros (positive exponent) and leading zeros (sub-1 magnitudes).
+ */
+function formatDecimal(mantissa: bigint, exponent: number): string {
+	const negative = mantissa < 0n
+	const digits = (negative ? -mantissa : mantissa).toString()
+
+	let body: string
+	if (exponent >= 0) {
+		body = digits + "0".repeat(exponent)
+	} else {
+		const decimalPlaces = -exponent
+		if (digits.length <= decimalPlaces) {
+			body = `0.${"0".repeat(decimalPlaces - digits.length)}${digits}`
+		} else {
+			const insertPos = digits.length - decimalPlaces
+			body = `${digits.slice(0, insertPos)}.${digits.slice(insertPos)}`
+		}
+	}
+
+	return negative ? `-${body}` : body
+}
+
+/**
  * Extract value from PropertyValue based on data type.
  *
  * GRC-20 v2 decoded values have the format: {type: "text", value: "..."}
@@ -650,32 +699,21 @@ export function propertyValueToVersionedValue(
 			result.boolean = value.value as boolean
 			break
 		case "int64":
-			result.integer = Number(value.value as bigint)
+			// int64 spans up to 2^63-1, far beyond Number's safe range (2^53), so
+			// keep it as a string to preserve precision. This also matches the
+			// snapshot path, where the pg driver returns bigint columns as strings.
+			result.integer = (value.value as bigint).toString()
 			break
 		case "float64":
 			result.float = value.value as number
 			break
 		case "decimal": {
-			// Decimal has exponent and mantissa fields at the top level
-			// Use string manipulation to preserve precision for large numbers (> 2^53)
-			const dec = value as unknown as {exponent: number; mantissa: {type: string; value: bigint}}
-			const mantissaStr = dec.mantissa.value.toString()
-			const exp = dec.exponent
-			if (exp >= 0) {
-				// Positive exponent: append zeros
-				result.decimal = mantissaStr + "0".repeat(exp)
-			} else {
-				// Negative exponent: insert decimal point
-				const decimalPlaces = -exp
-				if (mantissaStr.length <= decimalPlaces) {
-					// Need leading zeros after decimal point
-					result.decimal = "0." + "0".repeat(decimalPlaces - mantissaStr.length) + mantissaStr
-				} else {
-					// Insert decimal point within the string
-					const insertPos = mantissaStr.length - decimalPlaces
-					result.decimal = mantissaStr.slice(0, insertPos) + "." + mantissaStr.slice(insertPos)
-				}
-			}
+			// Decimal has exponent and mantissa fields at the top level. The mantissa
+			// is either an i64 (varint) or a `big` byte string for values that exceed
+			// i64. String manipulation preserves precision for large numbers (> 2^53).
+			const dec = value as unknown as {exponent: number; mantissa: DecimalMantissa}
+			const mantissa = dec.mantissa.type === "i64" ? dec.mantissa.value : bytesToBigInt(dec.mantissa.bytes)
+			result.decimal = formatDecimal(mantissa, dec.exponent)
 			break
 		}
 		case "bytes":
@@ -710,9 +748,23 @@ export function propertyValueToVersionedValue(
 			result.rect = `${rect.minLat},${rect.minLon},${rect.maxLat},${rect.maxLon}`
 			break
 		}
-		case "embedding":
-			result.embedding = value.value
+		case "embedding": {
+			// GRC-20 decodes embeddings as {subType, dims, data: Uint8Array} — there
+			// is no `value` field, so reading `value.value` silently dropped the
+			// vector. Mirror exactly what the kg-indexer persists to the `embedding`
+			// jsonb column ({sub_type, dims, data: hex}; see kg-indexer
+			// handlers/edits.rs) so a proposal diff matches the snapshot/live state
+			// instead of showing a spurious change.
+			const emb = value as unknown as {subType?: number; dims?: number; data?: Uint8Array}
+			result.embedding = emb.data
+				? {
+						sub_type: EMBEDDING_SUB_TYPE_NAMES[emb.subType ?? -1] ?? String(emb.subType),
+						dims: emb.dims,
+						data: Buffer.from(emb.data).toString("hex"),
+					}
+				: null
 			break
+		}
 		default:
 			// Unknown type - log warning and skip
 			console.warn(`Unknown value type in GRC-20 edit: ${value.type}`)

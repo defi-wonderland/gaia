@@ -65,6 +65,22 @@ function isTextValue(v: VersionedValue): boolean {
 }
 
 /**
+ * Stable JSON for object-shaped values whose key order isn't guaranteed across
+ * sources. Embeddings, for example, are read back from a JSONB column (which
+ * does not preserve insertion order) on the snapshot path but built as a plain
+ * object on the proposal path; comparing raw `JSON.stringify` output would flag
+ * a spurious change purely from key ordering. Sorting keys makes the comparison
+ * (and the emitted before/after) depend only on content. Arrays and primitives
+ * fall through to plain `JSON.stringify`.
+ */
+function stableJson(value: unknown): string {
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		return JSON.stringify(value, Object.keys(value as Record<string, unknown>).sort())
+	}
+	return JSON.stringify(value)
+}
+
+/**
  * Serialize a non-text value to a string for comparison.
  */
 function serializeValue(v: VersionedValue): string | null {
@@ -79,7 +95,7 @@ function serializeValue(v: VersionedValue): string | null {
 	if (v.schedule !== undefined && v.schedule !== null) return JSON.stringify(v.schedule)
 	if (v.point !== undefined && v.point !== null) return v.point
 	if (v.rect !== undefined && v.rect !== null) return v.rect
-	if (v.embedding !== undefined && v.embedding !== null) return JSON.stringify(v.embedding)
+	if (v.embedding !== undefined && v.embedding !== null) return stableJson(v.embedding)
 	return null
 }
 

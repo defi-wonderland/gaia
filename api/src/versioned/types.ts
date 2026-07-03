@@ -38,7 +38,7 @@ export interface VersionedValue {
 	spaceId: NormalizedUuid
 	// Value columns (GRC-20 v2 data types) - only one will be set
 	boolean?: boolean | null // BOOL
-	integer?: number | null // INT64
+	integer?: number | string | null // INT64 (string-encoded to preserve >2^53 precision)
 	float?: number | null // FLOAT64
 	decimal?: string | null // DECIMAL
 	text?: string | null // TEXT
