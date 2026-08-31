@@ -16,7 +16,7 @@ stream = { path = "../stream" }
 grc-20 = "0.4.1"
 prost = "0.13.5"
 opentelemetry = "0.31"
-opentelemetry_sdk = "0.31"
+opentelemetry_sdk = "0.32"
 tracing-opentelemetry = "0.32"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
